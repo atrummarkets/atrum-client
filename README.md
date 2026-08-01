@@ -93,16 +93,51 @@ with `InvalidProof()`, which looks exactly like broken contracts.
 
 Re-run `npm run sync` after every `make circuits` in atrum-core.
 
+## Measured, in headless Chromium 151
+
+`npm run browser-baseline`. Every proof verified in-browser.
+
+| circuit | download | Node | browser | multiplier | frame stall |
+|---|---|---|---|---|---|
+| `deposit` | 2.4MB | 369 ms | **276 ms** | **0.75×** | 96 ms |
+| `bet_encrypted` | 11.8MB | 881 ms | 1.83 s | 2.08× | **388 ms** |
+| `redeem_private` | 7.8MB | 517 ms | 1.04 s | 2.01× | 117 ms |
+| `withdraw` | 7.8MB | 517 ms | 1.27 s | 2.46× | 134 ms |
+
+`deposit` proving *faster* in a browser than in Node is not an error — at 1,621 constraints,
+Node's process and module-load overhead outweighs the proving itself, while the browser
+arrives warm. The multiplier is not a constant to extrapolate with.
+
+### Why proving runs in a Web Worker
+
+Not the multiplier — the **stall**. `requestAnimationFrame` stops firing while the main
+thread is blocked, so the gap after it resumes is the freeze a user actually sees. A 2×
+multiplier would have been survivable; a third of a second of dead UI on the primary action
+is not.
+
+`npm run worker-check` proves the fix works rather than assuming it, by proving
+`bet_encrypted` both ways in one page:
+
+| mode | prove | frame stall | UI |
+|---|---|---|---|
+| main thread | 1.00 s | 136 ms | frozen |
+| **web worker** | 1.02 s | **27 ms** | responsive |
+
+**The worker costs nothing in proving time and removes the freeze.** (On a worker's very
+first use the figure is ~2× higher — a cold wasm compile inside the worker, not a steady-state
+cost. It disappears on any subsequent proof.)
+
 ## Status
 
-- [x] Harness: 4 circuits, timed and verified, local Node baseline
-- [ ] Browser numbers recorded back into atrum-core `HANDOFF.md`
-- [ ] Web Worker decision (gated on those numbers)
-- [ ] Client: IndexedDB artefact cache, lazy-load per action, witness building from real
-      notes, Merkle paths from the sequencer's `GET /path?commitment=…`, denomination
-      snapping
+- [x] Harness: 4 circuits, timed and verified against a same-machine Node baseline
+- [x] Browser numbers measured and recorded in atrum-core `HANDOFF.md`
+- [x] Web Worker decision made on evidence, and verified by A/B
+- [x] IndexedDB artefact cache, keyed by verification-key fingerprint
+- [x] Sequencer CORS (in atrum-core, with tests on every branch)
+- [ ] Witness building from **real notes** rather than the canned fixtures
+- [ ] Wallet connection, transaction submission, minimal UI
+- [ ] End-to-end: a deposit proved in the browser from a fresh note, landed on testnet
 
-The sequencer sets no CORS headers today, so the client will need
-`Access-Control-Allow-Origin` added in atrum-core's `sequencer/src/main.ts` before it can
-fetch Merkle paths cross-origin. The harness does not need this — it runs entirely off local
-fixtures.
+The last item is the one that matters. Every proof so far — here and in atrum-core — used
+inputs the repo generated for itself. A client-built witness against a repo-built circuit is
+exactly the kind of seam where every real bug in this project has lived.
