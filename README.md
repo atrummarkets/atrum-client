@@ -135,8 +135,30 @@ cost. It disappears on any subsequent proof.)
 - [x] IndexedDB artefact cache, keyed by verification-key fingerprint
 - [x] Sequencer CORS (in atrum-core, with tests on every branch)
 - [x] Witness building from **real notes** rather than the canned fixtures
-- [ ] Wallet connection and transaction submission
-- [ ] End-to-end: that same deposit landed on testnet
+- [x] Wallet connection and transaction submission (`app.html`)
+- [ ] End-to-end: that same deposit landed on testnet — **needs a funded key**
+
+## Submitting a real deposit
+
+```bash
+npm run harness   # serves everything; open http://localhost:8080/app.html
+```
+
+Connect a wallet on Monad testnet (chain 10143). The page reads the vault, collateral token
+and denomination **from the chain**, starting at the pool address — nothing about the
+deployment is hardcoded here except `ShieldedPool`, because addresses copied into a frontend
+go stale silently, which is how this project already shipped a market that could never settle.
+
+You need, on the connected account:
+
+- **MON** for gas. Every shielded action declares the same 2,500,000 limit, and Monad bills
+  the *declared* limit rather than the gas used — measured, not assumed. That uniformity is an
+  anti-fingerprinting rule, so the client does not let the wallet estimate per action.
+- **Collateral**, which is a `MockERC20` on this deployment and has to be minted to you.
+
+> **This deployment is not private.** The committee key it encrypts against is a test key with
+> a published secret, so anyone can decrypt every bet. That holds until the trusted-setup
+> ceremony runs. Do not deposit anything you would mind losing.
 
 ### The seam check
 

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atrum — shielded deposit</title>
+<style>
+  :root { --bg:#0e0f12; --panel:#16181d; --line:#262a32; --text:#e6e8ec; --dim:#8b919c;
+          --ok:#5fd08a; --bad:#ef6a6a; --warn:#e0b341; --accent:#7aa2f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:2rem 1.5rem 4rem; background:var(--bg); color:var(--text);
+         font:15px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  main { max-width:52rem; margin:0 auto; }
+  h1 { font-size:1.5rem; margin:0 0 .35rem; letter-spacing:-.01em; }
+  h2 { font-size:.82rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dim);
+       margin:0 0 .8rem; font-weight:550; }
+  .sub { color:var(--dim); margin:0 0 1.5rem; max-width:42rem; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+           padding:1.1rem 1.25rem; margin-bottom:1.1rem; }
+  button { font:inherit; font-weight:550; color:#0e0f12; background:var(--accent);
+           border:0; border-radius:7px; padding:.55rem 1.1rem; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  select, input { font:inherit; background:#0e0f12; color:var(--text); border:1px solid var(--line);
+                  border-radius:7px; padding:.5rem .7rem; }
+  label { display:block; font-size:.85rem; color:var(--dim); margin-bottom:.3rem; }
+  .row { display:flex; gap:.9rem; align-items:flex-end; flex-wrap:wrap; }
+  .banner { border-radius:8px; padding:.75rem .9rem; font-size:.9rem; margin-bottom:1.1rem;
+            border:1px solid; }
+  .banner.warn { border-color:#5a4a1e; background:#241f10; color:#e8cf8f; }
+  code { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.9em; }
+  #log { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.85rem;
+         white-space:pre-wrap; color:var(--dim); margin:0; max-height:22rem; overflow-y:auto; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:.3rem 1rem; font-size:.9rem; }
+  .kv dt { color:var(--dim); } .kv dd { margin:0; font-family:ui-monospace, monospace; font-size:.9em; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Atrum — shielded deposit</h1>
+  <p class="sub">
+    Proves a deposit in your browser and submits it to the live pool on Monad testnet. The
+    note is created here, from randomness that never leaves this tab.
+  </p>
+
+  <div class="banner warn">
+    <strong>Testnet, with a disclosed key.</strong> The committee key this deployment encrypts
+    against is a <strong>test key whose secret is published</strong> — anyone can decrypt every
+    bet on it. Nothing here is private in the way the finished protocol will be, and it stays
+    that way until the trusted-setup ceremony runs. Do not put anything you would mind losing
+    into this contract.
+  </div>
+
+  <div class="panel">
+    <h2>Wallet</h2>
+    <div class="row">
+      <button id="connect">Connect</button>
+      <span id="account" class="dim">not connected</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Deposit</h2>
+    <div class="row">
+      <div>
+        <label for="market">Market</label>
+        <input id="market" type="number" value="8" min="0" style="width:7rem">
+      </div>
+      <div>
+        <label for="units">Units — powers of ten only</label>
+        <select id="units">
+          <option>1</option><option>10</option><option selected>100</option>
+          <option>1000</option><option>10000</option>
+        </select>
+      </div>
+      <button id="deposit" disabled>Prove and deposit</button>
+    </div>
+    <dl class="kv" id="market-info" style="margin-top:1rem"></dl>
+  </div>
+
+  <div class="panel">
+    <h2>Your notes — this is the money</h2>
+    <p class="dim" style="font-size:.87rem;margin:0 0 .8rem">
+      A note’s nullifier and secret are the only proof you own a position. There is no account
+      and no recovery. Clearing browser data destroys them; export and keep them somewhere safe.
+    </p>
+    <div class="row">
+      <button id="export" class="ghost">Export notes</button>
+      <span id="note-count" class="dim"></span>
+    </div>
+  </div>
+
+  <div class="panel"><pre id="log">ready.</pre></div>
+</main>
+
+<script src="./public/vendor/snarkjs.min.js"></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

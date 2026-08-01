@@ -125,6 +125,15 @@ if [[ ! -f "$SNARKJS" ]]; then
 fi
 cp "$SNARKJS" public/vendor/snarkjs.min.js
 
+# ethers, for wallet connection and transaction submission. Shipped as the package's own
+# prebuilt ESM bundle rather than something assembled here -- no reason to re-derive it.
+ETHERS="node_modules/ethers/dist/ethers.min.js"
+if [[ ! -f "$ETHERS" ]]; then
+    echo "error: $ETHERS not found -- run 'npm install' first." >&2
+    exit 1
+fi
+cp "$ETHERS" public/vendor/ethers.min.js
+
 echo
 echo "synced from $BUILD"
 printf '  available : %s\n' "${available[*]:-none}"

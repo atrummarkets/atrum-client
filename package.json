@@ -12,6 +12,7 @@
     "fresh-note": "node scripts/fresh-note-check.mjs"
   },
   "dependencies": {
+    "ethers": "^6.17.0",
     "snarkjs": "^0.7.6"
   },
   "devDependencies": {
