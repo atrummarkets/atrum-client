@@ -1,0 +1,17 @@
+node_modules/
+
+# Proving artefacts, copied out of atrum-core by scripts/sync-assets.sh.
+#
+# NEVER COMMIT THESE. Every one of them is gitignored in atrum-core too, and for a
+# load-bearing reason: `snarkjs zkey contribute` is deliberately non-deterministic, so a
+# zkey committed here would only ever match the machine that built it. atrum-core learned
+# this the expensive way by committing verification keys -- a clean `git pull` then failed a
+# third of the Solidity suite with InvalidProof(), which looks exactly like broken contracts.
+#
+# Re-sync instead: npm run sync
+public/circuits/
+public/fixtures/
+public/vendor/
+
+# Harness output, written by hand when recording a run.
+results/*.json
