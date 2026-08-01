@@ -134,10 +134,28 @@ cost. It disappears on any subsequent proof.)
 - [x] Web Worker decision made on evidence, and verified by A/B
 - [x] IndexedDB artefact cache, keyed by verification-key fingerprint
 - [x] Sequencer CORS (in atrum-core, with tests on every branch)
-- [ ] Witness building from **real notes** rather than the canned fixtures
-- [ ] Wallet connection, transaction submission, minimal UI
-- [ ] End-to-end: a deposit proved in the browser from a fresh note, landed on testnet
+- [x] Witness building from **real notes** rather than the canned fixtures
+- [ ] Wallet connection and transaction submission
+- [ ] End-to-end: that same deposit landed on testnet
 
-The last item is the one that matters. Every proof so far — here and in atrum-core — used
+### The seam check
+
+`npm run fresh-note`. Every proof this project had produced — here and in atrum-core — used
 inputs the repo generated for itself. A client-built witness against a repo-built circuit is
-exactly the kind of seam where every real bug in this project has lived.
+exactly the kind of seam where all three of this project's real bugs have lived.
+
+So this generates a note in the browser from fresh randomness, builds the witness with the
+client's own code, proves it, and checks it against `deposit_vkey.json`:
+
+```
+  verifies against vkey yes
+  signals match note    yes
+  Solidity calldata     yes
+```
+
+If the client's commitment derivation disagreed with `note.circom` by one bit, the witness
+would not satisfy the constraints and this would fail. It needs no chain, no sequencer and no
+funded key, so it can run in CI.
+
+**What is still untested is only the on-chain submission**, which needs a funded testnet key.
+

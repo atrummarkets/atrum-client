@@ -33,7 +33,24 @@ globalThis.Worker ??= class {
   }
 };
 
+// Hide Node's `Buffer` global so this check fails the way a browser would.
+//
+// Learned the hard way: circomlibjs's dependencies reference `Buffer` as a free global, not
+// only as a bare import, so aliasing the `buffer` package is not enough. With Node's Buffer
+// in scope this script happily verified a bundle that died on load in a real browser with
+// "Buffer is not defined". A check that only passes because of the environment it runs in is
+// worse than no check -- it certifies the bug.
+const nodeBuffer = globalThis.Buffer;
+const nodeProcess = globalThis.process;
+delete globalThis.Buffer;
+delete globalThis.process;
+
 const atrum = await import(join(ROOT, "public", "vendor", "atrum-core.mjs"));
+
+// Restore them: reading the fixture file below goes through Node's fs, and process.exit is
+// how this script reports its verdict.
+globalThis.Buffer = nodeBuffer;
+globalThis.process = nodeProcess;
 const inputs = JSON.parse(
   readFileSync(join(ROOT, "public", "fixtures", "witness-inputs.json"), "utf8"),
 );

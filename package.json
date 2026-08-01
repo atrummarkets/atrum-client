@@ -8,7 +8,8 @@
     "sync": "./scripts/sync-assets.sh",
     "harness": "http-server . -p 8080 -c-1",
     "browser-baseline": "node scripts/browser-baseline.mjs",
-    "worker-check": "node scripts/worker-check.mjs"
+    "worker-check": "node scripts/worker-check.mjs",
+    "fresh-note": "node scripts/fresh-note-check.mjs"
   },
   "dependencies": {
     "snarkjs": "^0.7.6"

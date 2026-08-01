@@ -107,6 +107,7 @@ npx --no-install esbuild "$ENTRY" \
     --bundle --format=esm --platform=browser \
     --alias:buffer=buffer --alias:events=events --alias:assert=assert \
     --define:global=globalThis \
+    --inject:scripts/browser-shims.mjs \
     --outfile=public/vendor/atrum-core.mjs \
     --log-level=warning
 rm -rf "$(dirname "$ENTRY")"
