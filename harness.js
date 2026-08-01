@@ -28,8 +28,8 @@ const CIRCUITS = [
   { name: 'withdraw', handoffMs: 1411, constraints: 14438 },
 ];
 
-// Filled from public/fixtures/node-baseline.json when present.
-let baselineSource = 'HANDOFF.md (different machine — run `npm run baseline` for a real multiplier)';
+// Filled from public/fixtures/proving-baseline.json when present.
+let baselineSource = 'HANDOFF.md (different machine — run `make bench` in atrum-core for a real multiplier)';
 
 const $ = (id) => document.getElementById(id);
 const rows = $('rows');
@@ -53,6 +53,32 @@ const fmtMs = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${Math.roun
 // the UI so nobody quotes it as one.
 const heapUsed = () => (performance.memory ? performance.memory.usedJSHeapSize : null);
 
+/**
+ * Watch how long the main thread goes without painting.
+ *
+ * This, not the multiplier, is what decides whether proving needs a Web Worker. A circuit
+ * that proves only 1.2x slower than Node still freezes the tab if it holds the thread for a
+ * second and a half — the user sees a dead page either way. requestAnimationFrame simply
+ * stops firing while the thread is blocked, so the gap after it resumes IS the stall.
+ */
+function startFrameMonitor() {
+  let last = performance.now();
+  let max = 0;
+  let running = true;
+  const tick = () => {
+    if (!running) return;
+    const now = performance.now();
+    if (now - last > max) max = now - last;
+    last = now;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  return () => {
+    running = false;
+    return max;
+  };
+}
+
 async function fetchBinary(url) {
   const t0 = performance.now();
   const res = await fetch(url);
@@ -74,7 +100,7 @@ function addRow(name) {
   const first = document.createElement('td');
   first.innerHTML = `<code>${name}</code>`;
   tr.appendChild(first);
-  for (let i = 0; i < 7; i += 1) cell(tr, '·', 'dim');
+  for (let i = 0; i < 8; i += 1) cell(tr, '·', 'dim');
   rows.appendChild(tr);
   return tr;
 }
@@ -115,13 +141,17 @@ async function runCircuit(spec, inputs, tr) {
 
   const heapBefore = heapUsed();
   log(`[${name}] proving…`);
+  const stopFrameMonitor = startFrameMonitor();
   const t0 = performance.now();
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasm.data, zkey.data);
   const proveMs = performance.now() - t0;
+  const frameStallMs = stopFrameMonitor();
   const heapAfter = heapUsed();
 
   const multiplier = proveMs / nodeMs;
   log(`[${name}] proved in ${fmtMs(proveMs)} — ${multiplier.toFixed(2)}× the Node baseline`);
+  log(`[${name}] longest frame stall ${fmtMs(frameStallMs)}`
+    + `${frameStallMs > 100 ? '  <- would freeze the UI; needs a Worker' : ''}`);
 
   // Verify, always. A proof that is fast and wrong is worse than one that is slow and right,
   // and passing the wrong zkey/wasm pair produces exactly that.
@@ -147,14 +177,15 @@ async function runCircuit(spec, inputs, tr) {
   setRow(tr, [
     { text: fmtBytes(bytes) },
     { text: fmtMs(fetchMs) },
-    { text: `${nodeMs} ms`, cls: 'dim' },
+    { text: `${Math.round(nodeMs)} ms`, cls: 'dim' },
     { text: fmtMs(proveMs) },
     { text: `${multiplier.toFixed(2)}×`, cls: `mult ${multiplier > 3 ? 'bad' : multiplier > 1.75 ? 'warn' : 'ok'}` },
+    { text: fmtMs(frameStallMs), cls: frameStallMs > 100 ? 'bad' : 'ok' },
     { text: verifyText, cls: verifyCls },
     { text: heapText, cls: 'dim' },
   ]);
 
-  return { name, bytes, fetchMs, proveMs, nodeMs, multiplier };
+  return { name, bytes, fetchMs, proveMs, nodeMs, multiplier, frameStallMs, verified: verifyCls === 'ok' };
 }
 
 $('runAll').onclick = async () => {
@@ -170,9 +201,10 @@ $('runAll').onclick = async () => {
     const inputs = await (await fetch('./public/fixtures/witness-inputs.json')).json();
 
     // Prefer a baseline measured on THIS machine over HANDOFF's, so the multiplier compares
-    // two runtimes rather than two laptops.
+    // two runtimes rather than two laptops. Written by `make bench` in atrum-core and copied
+    // across by `npm run sync`.
     try {
-      const res = await fetch('./public/fixtures/node-baseline.json');
+      const res = await fetch('./public/fixtures/proving-baseline.json');
       if (res.ok) {
         const baseline = await res.json();
         let matched = 0;
@@ -182,7 +214,7 @@ $('runAll').onclick = async () => {
         }
         if (matched) {
           baselineSource = `this machine, ${new Date(baseline.measuredAt).toLocaleString()} `
-            + `(Node ${baseline.node})`;
+            + `(${baseline.runtime})`;
         }
       }
     } catch { /* fall through to the HANDOFF constants */ }
@@ -212,11 +244,17 @@ $('runAll').onclick = async () => {
       const firstBetMs = firstBet.reduce((a, r) => a + r.proveMs, 0);
       const worst = results.reduce((a, r) => (r.multiplier > a.multiplier ? r : a));
 
+      const worstStall = results.reduce((a, r) => (r.frameStallMs > a.frameStallMs ? r : a));
+
       log('\n———');
       log(`full client   : ${fmtBytes(totalBytes)} across ${results.length} circuits`);
       log(`first bet     : ${fmtBytes(firstBetBytes)} to download, ${fmtMs(firstBetMs)} to prove `
         + '(deposit + bet_encrypted)');
       log(`worst case    : ${worst.name} at ${worst.multiplier.toFixed(2)}× Node`);
+      log(`worst stall   : ${worstStall.name} froze the thread for ${fmtMs(worstStall.frameStallMs)}`);
+      log(worstStall.frameStallMs > 100
+        ? 'VERDICT      : proving MUST move to a Web Worker — the main thread is unusable'
+        : 'VERDICT      : main-thread proving is survivable; a Worker is optional');
       log('\nRecord these numbers in atrum-core HANDOFF.md — they close the '
         + '"browser multiplier is unmeasured" gap.');
       console.table(results.map((r) => ({
@@ -227,12 +265,19 @@ $('runAll').onclick = async () => {
         multiplier: `${r.multiplier.toFixed(2)}x`,
       })));
       log('\n(a machine-readable copy is in the devtools console via console.table)');
+
+      // Scraped by scripts/browser-baseline.mjs, so the headless run and a human clicking
+      // Run measure through exactly the same code path.
+      window.__harnessResults = { results, baselineSource, totalBytes };
     }
     $('status').textContent = 'done';
+    window.__harnessDone = true;
   } catch (e) {
     log(`\nFATAL: ${e.message}`);
     log("if this is a 404, run 'npm run sync' to copy artefacts out of atrum-core.");
     $('status').textContent = 'failed';
+    window.__harnessError = e.message;
+    window.__harnessDone = true;
   } finally {
     $('runAll').disabled = false;
   }

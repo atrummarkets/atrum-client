@@ -15,3 +15,7 @@ public/vendor/
 
 # Harness output, written by hand when recording a run.
 results/*.json
+
+# `npm run browser-baseline` output. Describes this machine and this browser build, and is
+# regenerated on every run -- the numbers worth keeping live in atrum-core's HANDOFF.md.
+browser-baseline.json

@@ -13,9 +13,10 @@ So this repo starts as a harness, not a UI.
 ## Setup
 
 ```bash
+cd ../atrum-core && make bench    # measure Node proving on THIS machine
+cd ../atrum-client
 npm install
-npm run sync       # copy circuit artefacts out of ../atrum-core
-npm run baseline   # measure Node proving on THIS machine
+npm run sync       # copy artefacts + bundle core's primitives for the browser
 npm run harness    # serve on :8080, then open http://localhost:8080/harness.html
 ```
 
@@ -24,10 +25,35 @@ npm run harness    # serve on :8080, then open http://localhost:8080/harness.htm
 least once (`make circuits`), because every artefact it copies is gitignored there and
 regenerated per build.
 
+## What lives where
+
+This repo is the **frontend**. Anything that measures or defines the protocol lives in
+`atrum-core`:
+
+| concern | repo |
+|---|---|
+| circuits, contracts, sequencer, ceremony | `atrum-core` |
+| Node proving benchmarks (`make bench`) | `atrum-core` |
+| note/commitment, packing, ElGamal | `atrum-core` |
+| browser harness, client, worker, IndexedDB | here |
+
+`npm run sync` bundles core's `atrum.mjs` and `lib/elgamal.mjs` into
+`public/vendor/atrum-core.mjs` with esbuild, rather than this repo reimplementing them.
+Those hashing rules already exist three times — in `note.circom`, in
+`IncrementalMerkleTree.sol` and in `atrum.mjs` — and all three must agree bit for bit. A
+fourth copy in the frontend is how they would drift, and a divergent commitment fails at
+proof verification with no diagnostic.
+
+Every sync therefore ends by running `scripts/verify-bundle.mjs`, which re-derives values
+the circuits already accepted (the recorded public signals in `witness-inputs.json`) and
+**refuses the bundle if any differ**. That is what makes trusting the browser shims for
+`buffer`/`events`/`assert` defensible.
+
 ## Why the baseline step matters
 
-Run `npm run baseline` before the harness. It re-measures Node proving locally and writes
-`public/fixtures/node-baseline.json`, which the harness uses as the multiplier's denominator.
+Run `make bench` in atrum-core before the harness. It measures Node proving there and writes
+`circuits/build/proving-baseline.json`, which `npm run sync` copies here and the harness uses
+as the multiplier's denominator.
 
 Without it the harness falls back to the Node timings in atrum-core's `HANDOFF.md` — which
 were recorded on a different machine. Measured here, the same four circuits prove roughly
@@ -35,10 +61,10 @@ twice as fast as that record:
 
 | circuit | HANDOFF | this machine |
 |---|---|---|
-| `deposit` | 322 ms | ~364 ms |
-| `bet_encrypted` | 2,255 ms | ~916 ms |
-| `redeem_private` | 1,437 ms | ~571 ms |
-| `withdraw` | 1,411 ms | ~561 ms |
+| `deposit` | 322 ms | ~369 ms |
+| `bet_encrypted` | 2,255 ms | ~881 ms |
+| `redeem_private` | 1,437 ms | ~517 ms |
+| `withdraw` | 1,411 ms | ~517 ms |
 
 Dividing a browser time measured here by a Node time measured there describes the two
 machines as much as the two runtimes, and would understate the browser multiplier by about

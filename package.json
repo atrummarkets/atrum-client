@@ -6,13 +6,18 @@
   "description": "Browser proving harness and client for the Atrum shielded pool.",
   "scripts": {
     "sync": "./scripts/sync-assets.sh",
-    "baseline": "node scripts/node-baseline.mjs",
-    "harness": "http-server . -p 8080 -c-1"
+    "harness": "http-server . -p 8080 -c-1",
+    "browser-baseline": "node scripts/browser-baseline.mjs"
   },
   "dependencies": {
     "snarkjs": "^0.7.6"
   },
   "devDependencies": {
-    "http-server": "^14.1.1"
+    "assert": "^2.1.0",
+    "buffer": "^6.0.3",
+    "esbuild": "^0.25.0",
+    "events": "^3.3.0",
+    "http-server": "^14.1.1",
+    "playwright-core": "^1.62.1"
   }
 }

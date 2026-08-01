@@ -71,6 +71,50 @@ done
 # with no renaming.
 cp "$BUILD/witness-inputs.json" public/fixtures/witness-inputs.json
 
+# Node proving times, measured by `make bench` in atrum-core. The harness divides browser
+# timings by these, so both halves of the multiplier come from the same machine. Optional:
+# without it the harness falls back to HANDOFF's figures and says so.
+if [[ -f "$BUILD/proving-baseline.json" ]]; then
+    cp "$BUILD/proving-baseline.json" public/fixtures/proving-baseline.json
+else
+    echo "  note: no proving-baseline.json -- run 'make bench' in atrum-core" >&2
+    rm -f public/fixtures/proving-baseline.json
+fi
+
+# atrum-core's note/commitment/packing/ElGamal primitives, bundled for the browser.
+#
+# WHY BUNDLE RATHER THAN REIMPLEMENT. `circuits/scripts/atrum.mjs` is already the third
+# implementation of these hashing rules, alongside `note.circom` and
+# `IncrementalMerkleTree.sol`, and all three must agree bit for bit. A fourth copy living in
+# the frontend is how they would drift -- and a divergent commitment fails at proof
+# verification with no diagnostic, which is the worst possible symptom.
+#
+# WHY BUNDLE RATHER THAN COPY. Those modules import `circomlibjs` and `js-sha3` as bare
+# specifiers, which a no-bundler page cannot resolve. esbuild resolves them out of
+# atrum-core's own node_modules and emits one self-contained ESM file.
+ENTRY="$(mktemp -d)/entry.mjs"
+CORE_ABS="$(cd "$ATRUM_CORE" && pwd)"
+cat > "$ENTRY" <<EOF
+export * from "$CORE_ABS/circuits/scripts/atrum.mjs";
+export { buildElGamal, SUBGROUP_ORDER } from "$CORE_ABS/circuits/scripts/lib/elgamal.mjs";
+EOF
+
+# circomlibjs reaches for three Node builtins (`buffer`, `events`, `assert`) through its
+# dependency tree. The aliases point them at the standard browser shims. verify-bundle.mjs
+# below is what makes trusting those shims defensible -- it re-derives values the circuits
+# already accepted and refuses the bundle if any differ.
+npx --no-install esbuild "$ENTRY" \
+    --bundle --format=esm --platform=browser \
+    --alias:buffer=buffer --alias:events=events --alias:assert=assert \
+    --define:global=globalThis \
+    --outfile=public/vendor/atrum-core.mjs \
+    --log-level=warning
+rm -rf "$(dirname "$ENTRY")"
+
+echo
+echo "verifying the bundle against circuit-accepted values"
+node scripts/verify-bundle.mjs
+
 # snarkjs's own browser build, from THIS repo's node_modules -- version-pinned by
 # package-lock.json rather than hand-vendored.
 SNARKJS="node_modules/snarkjs/build/snarkjs.min.js"
