@@ -74,22 +74,34 @@ async function renderNotes() {
     const tr = document.createElement("tr");
     if (role === "spent") tr.className = "spent";
 
+    const withdrawHtml =
+      `<input class="amt" type="number" min="1" max="${note.units}" value="${note.units}" data-amt="${note.id}"> ` +
+      `<button class="small" data-act="withdraw" data-c="${note.id}">Withdraw</button>`;
+
     let actionHtml = '<span class="dim">—</span>';
     if (role === "bettable") {
+      // An unbet note offers BOTH: it is bettable in any market and withdrawable right now,
+      // because it is bound to no market and has nothing to wait for. Showing only the bet
+      // buttons would hide the capability the shared pool exists to provide.
       actionHtml =
         `<button class="small" data-act="bet" data-side="1" data-c="${note.id}">Bet YES</button> ` +
-        `<button class="small" data-act="bet" data-side="2" data-c="${note.id}">Bet NO</button>`;
+        `<button class="small" data-act="bet" data-side="2" data-c="${note.id}">Bet NO</button> ` +
+        withdrawHtml;
     } else if (role === "redeemable") {
       actionHtml = `<button class="small" data-act="redeem" data-c="${note.id}">Redeem</button>`;
     } else if (role === "withdrawable") {
-      actionHtml =
-        `<input class="amt" type="number" min="1" max="${note.units}" value="${note.units}" data-amt="${note.id}"> ` +
-        `<button class="small" data-act="withdraw" data-c="${note.id}">Withdraw</button>`;
+      actionHtml = withdrawHtml;
     }
+
+    // An unbet note carries NO_MARKET, which reads as a bare "0" and looks like market zero.
+    // Name it, because "which market is this in" is the first question the column answers.
+    const marketCell = note.outcome === 0n || note.outcome === "0"
+      ? "any (unbet)"
+      : note.marketId;
 
     tr.innerHTML =
       `<td title="${note.id}">${short(note.id)}</td>` +
-      `<td>${note.marketId}</td>` +
+      `<td>${marketCell}</td>` +
       `<td>${note.units}</td>` +
       `<td>${OUTCOME_LABEL[note.outcome] ?? note.outcome}</td>` +
       `<td>${role}</td>` +
@@ -125,15 +137,21 @@ async function betOnNote(commitment, side) {
   if (!note) return log(`no such note ${commitment}`);
 
   try {
-    log(`\nbetting ${side === 1n ? "YES" : "NO"} with ${short(commitment)}…`);
+    // The market comes from the dropdown, NOT from the note. An unbet note carries
+    // NO_MARKET -- it is not in any market yet, and choosing which one is exactly what this
+    // action does. Reading `note.marketId` here would stake every note into market 0.
+    const marketId = BigInt($("market").value);
+    if (marketId === 0n) return log("pick a market first");
 
-    const pubKey = await committeeKey(session.signer, Number(note.marketId));
+    log(`\nbetting ${side === 1n ? "YES" : "NO"} in market ${marketId} with ${short(commitment)}…`);
+
+    const pubKey = await committeeKey(session.signer, Number(marketId));
     const elgamal = await core.buildElGamal(pubKey);
 
     const path = await pathForSpend(note);
 
-    const position = await createPositionNote({ marketId: note.marketId, units: note.units, outcome: side });
-    await saveNote(position, { status: "unsubmitted", marketId: note.marketId.toString() });
+    const position = await createPositionNote({ marketId, units: note.units, outcome: side });
+    await saveNote(position, { status: "unsubmitted", marketId: marketId.toString() });
     log(`  new position note ${short(position.commitment.toString())} saved locally`);
 
     const input = await betInput({ spend: note, position, path, elgamal });
@@ -151,14 +169,14 @@ async function betOnNote(commitment, side) {
       signer: session.signer,
       positionNote: position,
       calldata,
-      marketId: Number(note.marketId),
+      marketId: Number(marketId),
       onStatus: (s) => log(`  ${s}`),
     });
 
     await markSpent(note.id, { spentTx: result.hash });
     await saveNote(position, {
       status: "deposited",
-      marketId: note.marketId.toString(),
+      marketId: marketId.toString(),
       txHash: result.hash,
       blockNumber: result.blockNumber,
     });
@@ -264,7 +282,15 @@ async function withdrawNote(commitment, amountStr) {
     const change = note.units - amount;
     const path = await pathForSpend(note);
 
-    const changeNote = await createPositionNote({ marketId: note.marketId, units: change, outcome: OUTCOME.SETTLED });
+    // The change note mirrors the note being spent on BOTH marketId and outcome, because
+    // `withdraw.circom` builds it from the same signals. A SETTLED payout's change stays
+    // SETTLED; an unbet note's change stays UNBET, and so stays bettable as well as
+    // withdrawable.
+    const changeNote = await createPositionNote({
+      marketId: note.marketId,
+      units: change,
+      outcome: note.outcome,
+    });
     await saveNote(changeNote, { status: "unsubmitted", marketId: note.marketId.toString() });
     log(`  change note ${short(changeNote.commitment.toString())} (${change} units) saved locally`);
 
@@ -393,7 +419,6 @@ $("deposit").onclick = async () => {
 
   $("deposit").disabled = true;
   try {
-    const marketId = BigInt($("market").value);
     const units = BigInt($("units").value);
 
     // The chain enforces this, but it rejects AFTER the user has paid for the declared gas
@@ -402,12 +427,14 @@ $("deposit").onclick = async () => {
       throw new Error(`${units} is not a denomination: ${core.DENOMINATIONS.join(", ")}`);
     }
 
-    log(`\ncreating a note for market ${marketId}, ${units} units…`);
-    const note = await createNote({ marketId, units });
+    // No market. The note this creates can back a bet in ANY market, or be withdrawn without
+    // ever backing one -- which is why the market dropdown above does not gate a deposit.
+    log(`\ncreating an unbet note for ${units} units…`);
+    const note = await createNote({ units });
     log(`  commitment ${note.commitment}`);
 
     // Before proving, before broadcasting. See the note at the top of this file.
-    await saveNote(note, { status: "unsubmitted", marketId: marketId.toString() });
+    await saveNote(note, { status: "unsubmitted", marketId: note.marketId.toString() });
     await renderNotes();
     log("  saved locally (export it — losing it loses the funds)");
 
@@ -426,13 +453,12 @@ $("deposit").onclick = async () => {
       signer: session.signer,
       note,
       calldata,
-      marketId: Number(marketId),
       onStatus: (s) => log(`  ${s}`),
     });
 
     await saveNote(note, {
       status: "deposited",
-      marketId: marketId.toString(),
+      marketId: note.marketId.toString(),
       txHash: result.hash,
       blockNumber: result.blockNumber,
     });

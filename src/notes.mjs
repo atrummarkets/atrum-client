@@ -38,13 +38,21 @@ export function randomFieldElement() {
 }
 
 /**
+ * The marketId every unbet note carries. A deposit names no market, so there is one shared
+ * pool and the anonymity set is every unspent note in the system rather than one market's
+ * depositors. `deposit.circom` and `bet_encrypted.circom` both pin to it, and the contract
+ * refuses to register it as a real market.
+ */
+export const NO_MARKET = 0n;
+
+/**
  * A fresh unbet note. This is what a deposit creates.
  *
- * `outcome` is pinned to UNBET because `deposit.circom` pins it too -- the circuit will not
- * accept anything else, and letting a caller pass a value that can only be 0 invites a
- * mismatch that surfaces as an unexplained proof failure.
+ * Both `marketId` and `outcome` are pinned rather than accepted, because the circuit pins
+ * them too -- a caller passing a value that can only ever be one thing invites a mismatch
+ * that surfaces as an unexplained proof failure rather than as a type error.
  */
-export async function createNote({ marketId, units }) {
+export async function createNote({ units }) {
   await core.init();
 
   const nullifier = randomFieldElement();
@@ -52,7 +60,7 @@ export async function createNote({ marketId, units }) {
   const note = {
     nullifier,
     secret,
-    marketId: BigInt(marketId),
+    marketId: NO_MARKET,
     outcome: OUTCOME.UNBET,
     units: BigInt(units),
   };
@@ -80,9 +88,10 @@ export async function createPositionNote({ marketId, units, outcome }) {
 /**
  * Circuit input for `deposit`.
  *
- * Public signals are [commitment, marketId, units] -- no Merkle path, because a deposit
- * creates a leaf rather than spending one. This is the only action a brand-new user can take
- * and the only one that needs nothing from the sequencer.
+ * Public signals are [commitment, units] -- no marketId, because a deposit no longer names a
+ * market, and no Merkle path, because a deposit creates a leaf rather than spending one. This
+ * is the only action a brand-new user can take and the only one needing nothing from the
+ * sequencer.
  */
 export function depositInput(note) {
   if (!core.isValidDenomination(note.units)) {
@@ -91,10 +100,12 @@ export function depositInput(note) {
         `The chain accepts powers of ten only: ${core.DENOMINATIONS.join(", ")}.`,
     );
   }
+  if (note.marketId !== NO_MARKET) {
+    throw new Error("a deposit note must carry NO_MARKET -- deposit.circom pins marketId to 0");
+  }
 
   return {
     commitment: note.commitment.toString(),
-    marketId: note.marketId.toString(),
     units: note.units.toString(),
     nullifier: note.nullifier.toString(),
     secret: note.secret.toString(),
@@ -112,6 +123,10 @@ export function depositInput(note) {
  */
 export async function betInput({ spend, position, path, elgamal }) {
   if (spend.outcome !== OUTCOME.UNBET) throw new Error("only an unbet note can be staked");
+  // `bet_encrypted.circom` pins the SPENT note's marketId to 0. Without this check a client
+  // holding a position note would build a witness the circuit silently refuses, and the error
+  // would surface as a proving failure with nothing pointing at the cause.
+  if (spend.marketId !== NO_MARKET) throw new Error("only an unbet (NO_MARKET) note can be staked");
   if (position.units !== spend.units) throw new Error("a bet stakes the whole note");
   if (position.outcome !== OUTCOME.YES && position.outcome !== OUTCOME.NO) {
     throw new Error("a position must be YES or NO");
@@ -213,8 +228,16 @@ export function redeemInput({ spend, payoutNote, path, totalPool, winningPool })
 }
 
 /**
- * Circuit input for `withdraw`: spend a SETTLED note, pay `amount` out publicly, keep
- * `change` as a new SETTLED note.
+ * Circuit input for `withdraw`: spend a note that is entitled to leave, pay `amount` out
+ * publicly, keep `change` as a new note of the same kind.
+ *
+ * TWO kinds of note can leave, and `withdraw.circom` DERIVES which from `marketId` rather
+ * than accepting it as a signal:
+ *
+ *   - a SETTLED payout note in a real market -- the end of deposit -> bet -> redeem;
+ *   - an UNBET note carrying NO_MARKET -- collateral deposited and never staked, which under
+ *     one shared pool has no market to wait for. Its change stays UNBET, so the remainder is
+ *     not merely still withdrawable but still bettable.
  *
  * `amount` and `recipient` are public on chain by necessity -- real collateral moves.
  * Privacy here comes from unlinkability, not secrecy: withdrawing round denominations
@@ -222,23 +245,38 @@ export function redeemInput({ spend, payoutNote, path, totalPool, winningPool })
  * fingerprinting the position that funded them. This function does not enforce that choice;
  * it enforces only that the arithmetic is consistent.
  *
- * @param spend      a SETTLED note
+ * @param spend      a SETTLED note, or an UNBET note carrying NO_MARKET
  * @param recipient  where the public payout goes
  * @param amount     units to make public and pay out (<= spend.units)
- * @param changeNote a SETTLED note holding exactly `spend.units - amount`
+ * @param changeNote a note of the SAME kind holding exactly `spend.units - amount`
  * @param path       from the sequencer
  */
 export function withdrawInput({ spend, recipient, amount, changeNote, path }) {
-  if (spend.outcome !== OUTCOME.SETTLED) {
+  const unbetExit = spend.marketId === NO_MARKET;
+
+  if (unbetExit) {
+    if (spend.outcome !== OUTCOME.UNBET) {
+      throw new Error("a NO_MARKET note must be UNBET -- nothing else can carry the sentinel");
+    }
+  } else if (spend.outcome !== OUTCOME.SETTLED) {
     throw new Error("only a SETTLED note can be withdrawn -- redeem it first");
   }
+
   if (amount <= 0n) throw new Error("withdraw amount must be positive");
   if (amount > spend.units) throw new Error("withdraw amount exceeds the note's units");
 
   const change = spend.units - amount;
 
-  if (changeNote.outcome !== OUTCOME.SETTLED) {
-    throw new Error("the withdraw change note must be outcome SETTLED");
+  // The change note must match the spent note on BOTH fields, because the circuit builds it
+  // from the same `marketId` and the same derived outcome. A mismatch here produces a witness
+  // the circuit rejects, with nothing in the failure naming the cause.
+  if (changeNote.marketId !== spend.marketId) {
+    throw new Error("the withdraw change note must carry the same marketId as the note spent");
+  }
+  if (changeNote.outcome !== spend.outcome) {
+    throw new Error(
+      `the withdraw change note must be outcome ${unbetExit ? "UNBET" : "SETTLED"}`,
+    );
   }
   if (changeNote.units !== change) {
     throw new Error(
@@ -349,6 +387,20 @@ export function noteRole(note) {
   if (note.outcome === OUTCOME.YES || note.outcome === OUTCOME.NO) return "redeemable";
   if (note.outcome === OUTCOME.SETTLED) return "withdrawable";
   return "unknown";
+}
+
+/**
+ * Whether this note can leave the pool right now.
+ *
+ * Deliberately NOT folded into `noteRole`, which names the note's PRIMARY action and has to
+ * stay single-valued for the UI to key off. An unbet note is genuinely two things at once:
+ * bettable in any market, and withdrawable immediately, because under one shared pool it is
+ * bound to no market and has nothing to wait for. That is the capability the shared pool
+ * bought, and collapsing it into one role would hide it.
+ */
+export function canWithdraw(note) {
+  if (note.status === "spent") return false;
+  return note.outcome === OUTCOME.SETTLED || note.outcome === OUTCOME.UNBET;
 }
 
 export async function allNotes() {

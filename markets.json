@@ -21,6 +21,27 @@
       "bettingCloseTime": 1785666767,
       "resolutionStartTime": 1785670607,
       "createdAt": 1785666587
+    },
+    {
+      "id": 12,
+      "question": "Will ETH be above $2,000 at 2026-08-02T13:40:52.000Z?",
+      "type": "oracle",
+      "symbol": "ETH",
+      "direction": "above",
+      "threshold": "2000",
+      "vault": "0x02D8Ea00f512676ffE5248FaBd7Ce25B3F2028d7",
+      "resolver": "0x8b4C1090565935b38A649efD686d4c38d22BE733",
+      "spec": {
+        "priceId": "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
+        "threshold": "200000000000",
+        "thresholdExpo": -8,
+        "targetTime": 1785678052,
+        "windowSeconds": 3600,
+        "greaterThan": true
+      },
+      "bettingCloseTime": 1785677452,
+      "resolutionStartTime": 1785681712,
+      "createdAt": 1785667252
     }
   ]
 }

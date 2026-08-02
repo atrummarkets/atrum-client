@@ -64,7 +64,9 @@ const checks = [];
 const check = (name, got, want) =>
   checks.push({ name, ok: B(got) === B(want), got: String(got), want: String(want) });
 
-// deposit pins outcome = 0 (unbet collateral).
+// deposit pins BOTH marketId = 0 (NO_MARKET) and outcome = 0 (unbet collateral). Neither is
+// a witness input any more -- a deposit names no market -- so both are written as literals
+// here. If the circuit ever unpinned one, this recomputation would stop matching.
 {
   const d = inputs.deposit;
   check(
@@ -72,12 +74,18 @@ const check = (name, got, want) =>
     atrum.noteCommitment({
       nullifier: B(d.nullifier),
       secret: B(d.secret),
-      marketId: B(d.marketId),
+      marketId: 0n,
       outcome: 0n,
       units: B(d.units),
     }),
     d.commitment,
   );
+  checks.push({
+    name: "deposit witness carries no marketId",
+    ok: d.marketId === undefined,
+    got: String(d.marketId),
+    want: "undefined",
+  });
 }
 
 // bet_encrypted spends an unbet note and emits a positioned one.
@@ -200,6 +208,34 @@ const notes = await import(join(ROOT, "src", "notes.mjs"));
   ]) {
     check(`withdrawInput.${field}`, witness[field], w[field]);
   }
+}
+
+// `depositInput` is the one witness builder a brand-new user hits before anything else, and
+// the one whose shape just changed. It emits no marketId at all now, so the check is as much
+// about what is ABSENT as about what matches -- an extra key would make snarkjs reject the
+// witness with an error that names no field.
+{
+  const d = inputs.deposit;
+  const note = {
+    nullifier: B(d.nullifier),
+    secret: B(d.secret),
+    marketId: notes.NO_MARKET,
+    outcome: notes.OUTCOME.UNBET,
+    units: B(d.units),
+    commitment: B(d.commitment),
+  };
+
+  const witness = notes.depositInput(note);
+
+  for (const field of ["commitment", "units", "nullifier", "secret"]) {
+    check(`depositInput.${field}`, witness[field], d[field]);
+  }
+  checks.push({
+    name: "depositInput emits exactly the circuit's signals",
+    ok: Object.keys(witness).sort().join(",") === "commitment,nullifier,secret,units",
+    got: Object.keys(witness).sort().join(","),
+    want: "commitment,nullifier,secret,units",
+  });
 }
 
 const failed = checks.filter((c) => !c.ok);

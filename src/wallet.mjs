@@ -121,7 +121,11 @@ const POOL_ABI = [
   "function marketVault(uint32) view returns (address)",
   "function encryptedMarket(uint32) view returns (bool)",
   "function encryptedTotals() view returns (address)",
-  "function deposit(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 commitment, uint32 marketId, uint256 units)",
+  // No marketId: a deposit names no market. Collateral goes into shared custody and the
+  // note it creates can back a bet in any market -- see `poolInfo`.
+  "function deposit(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 commitment, uint256 units)",
+  "function collateral() view returns (address)",
+  "function denomination() view returns (uint256)",
   "function betEncrypted(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 newCommitment, uint256 betMeta, uint256[4] ciphertext)",
   "function redeemPrivate(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 newCommitment, uint256 redeemMeta)",
   "function withdraw(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 changeCommitment, uint256 withdrawData)",
@@ -188,6 +192,29 @@ export async function connect() {
 
   const signer = await new ethers.BrowserProvider(window.ethereum).getSigner();
   return { provider, signer, address: await signer.getAddress() };
+}
+
+/**
+ * What a DEPOSIT needs, which is no longer anything about a market.
+ *
+ * The pool holds one collateral token at one denomination for every market on it, so this is
+ * the whole of a deposit's chain-side context. It exists as its own function because the
+ * alternative -- asking `marketInfo` for a market the deposit does not have -- was how the
+ * client came to require a market it never used.
+ */
+export async function poolInfo(signer, poolAddress = SHIELDED_POOL) {
+  const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
+  const [collateralAddress, denomination] = await readWithRetry(() =>
+    Promise.all([pool.collateral(), pool.denomination()]),
+  );
+
+  const collateral = new ethers.Contract(collateralAddress, ERC20_ABI, signer);
+  const [symbol, decimals] = await Promise.all([
+    collateral.symbol().catch(() => "?"),
+    collateral.decimals().catch(() => 18),
+  ]);
+
+  return { pool, collateral, collateralAddress, denomination, symbol, decimals };
 }
 
 /**
@@ -327,19 +354,21 @@ export async function ensureAllowance({ collateral, owner, spender, amount, onSt
  * 2,500,000 declared gas -- and on Monad the declared limit is billed whether the call
  * succeeds or reverts.
  */
-export async function submitDeposit({ signer, note, calldata, marketId, poolAddress = SHIELDED_POOL, onStatus }) {
+export async function submitDeposit({ signer, note, calldata, poolAddress = SHIELDED_POOL, onStatus }) {
   const { pA, pB, pC, publicSignals } = parseCalldata(calldata);
 
   if (BigInt(publicSignals[0]) !== note.commitment) {
     throw new Error("proof commitment does not match the note — refusing to submit");
   }
-  if (BigInt(publicSignals[2]) !== note.units) {
+  // Signal 1, not 2: `deposit.circom` dropped marketId, so the layout is [commitment, units].
+  if (BigInt(publicSignals[1]) !== note.units) {
     throw new Error("proof units do not match the note — refusing to submit");
   }
 
-  const info = await marketInfo(signer, marketId, poolAddress);
-  if (!info.vault) throw new Error(info.reason);
-  if (info.closed) throw new Error(`betting closed for market ${marketId}`);
+  // No market is read, and no betting deadline is checked. A deposit is not tied to a market,
+  // so there is no clock it can miss -- the note stays bettable in whatever market is open
+  // when the holder decides, and withdrawable if they never decide at all.
+  const info = await poolInfo(signer, poolAddress);
 
   const owner = await signer.getAddress();
   const amount = note.units * info.denomination;
@@ -361,7 +390,7 @@ export async function submitDeposit({ signer, note, calldata, marketId, poolAddr
   });
 
   onStatus?.("submitting deposit…");
-  const tx = await info.pool.deposit(pA, pB, pC, note.commitment, marketId, note.units, {
+  const tx = await info.pool.deposit(pA, pB, pC, note.commitment, note.units, {
     gasLimit: ACTION_GAS_LIMIT,
   });
 
@@ -515,8 +544,12 @@ export async function submitWithdraw({
     throw new Error("proof's change commitment does not match the change note — refusing to submit");
   }
 
-  const info = await marketInfo(signer, marketId, poolAddress);
-  if (!info.vault) throw new Error(info.reason);
+  // marketId 0 is NO_MARKET: the unbet exit, which has no vault to look up. Asking for one
+  // would fail with "not registered" on the one withdrawal that is always available.
+  const info = marketId === 0 || marketId === 0n
+    ? await poolInfo(signer, poolAddress)
+    : await marketInfo(signer, marketId, poolAddress);
+  if (info.vault === null) throw new Error(info.reason);
 
   if (useRelay()) {
     // The relayer cannot redirect this: `recipient` lives inside `withdrawData`, which is a
