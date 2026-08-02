@@ -16,6 +16,12 @@ public/vendor/
 # Harness output, written by hand when recording a run.
 results/*.json
 
+# A real persistent browser profile (IndexedDB, etc), used by scripts/live-loop.mjs so notes
+# created in one run (deposit) are still there for the next (bet). Local test state, not a
+# repo asset -- and it holds whatever notes were created against whatever pool was live at
+# the time, which goes stale the moment that pool does.
+.live-loop-profile/
+
 # `npm run browser-baseline` output. Describes this machine and this browser build, and is
 # regenerated on every run -- the numbers worth keeping live in atrum-core's HANDOFF.md.
 browser-baseline.json

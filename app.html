@@ -34,6 +34,15 @@
   .kv { display:grid; grid-template-columns:auto 1fr; gap:.3rem 1rem; font-size:.9rem; }
   .kv dt { color:var(--dim); } .kv dd { margin:0; font-family:ui-monospace, monospace; font-size:.9em; }
   .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+  table { border-collapse:collapse; width:100%; font-size:.86rem; }
+  th, td { text-align:left; padding:.4rem .5rem; border-bottom:1px solid var(--line);
+           font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  th { color:var(--dim); font-weight:550; text-transform:uppercase; font-size:.72rem;
+       letter-spacing:.04em; font-family:inherit; }
+  tr.spent { opacity:.4; }
+  .tablewrap { overflow-x:auto; }
+  button.small { padding:.3rem .6rem; font-size:.82rem; }
+  input.amt { width:6rem; font-size:.82rem; padding:.3rem .5rem; }
 </style>
 </head>
 <body>
@@ -84,11 +93,35 @@
     <p class="dim" style="font-size:.87rem;margin:0 0 .8rem">
       A note’s nullifier and secret are the only proof you own a position. There is no account
       and no recovery. Clearing browser data destroys them; export and keep them somewhere safe.
+      The action button on each row is what that note is currently usable for — an unbet note
+      can only bet, a position note can only redeem (once the market is resolved and settled),
+      a settled note can only withdraw.
     </p>
-    <div class="row">
+    <div class="row" style="margin-bottom:.9rem">
       <button id="export" class="ghost">Export notes</button>
+      <button id="refresh-notes" class="ghost">Refresh</button>
       <span id="note-count" class="dim"></span>
     </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Commitment</th><th>Market</th><th>Units</th><th>Outcome</th><th>Status</th><th>Action</th></tr>
+        </thead>
+        <tbody id="notes-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Settle a market — operator step, not a wallet action</h2>
+    <p class="dim" style="font-size:.87rem;margin:0 0 .8rem">
+      Redeeming needs the market resolved and its totals published. Neither happens
+      automatically here — there is no publisher service running. Run
+      <code>resolve-and-settle.mjs</code> in atrum-core (see its own usage text), then click
+      Refresh below.
+    </p>
+    <button id="refresh-settlement" class="ghost">Check settlement status</button>
+    <dl class="kv" id="settlement-info" style="margin-top:.8rem"></dl>
   </div>
 
   <div class="panel"><pre id="log">ready.</pre></div>
