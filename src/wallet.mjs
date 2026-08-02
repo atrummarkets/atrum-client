@@ -101,7 +101,7 @@ export const MONAD_TESTNET = {
  * build/ no longer holds). Byte-verified after deploy: all four verifiers' on-chain bytecode
  * matches `forge inspect <Name> deployedBytecode` exactly, sha256 identical.
  */
-export const SHIELDED_POOL = "0x75E5B101D1dA02F1B19364a5d49f1Ee0b260a08a";
+export const SHIELDED_POOL = "0x5EaB8063fB060012c550b29E7321d79b6740773c";
 
 /**
  * Monad bills the DECLARED gas limit, not the gas used -- measured, not assumed. A 21,000-gas
@@ -126,6 +126,11 @@ const POOL_ABI = [
   "function deposit(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 commitment, uint256 units)",
   "function collateral() view returns (address)",
   "function denomination() view returns (uint256)",
+  "function totalDeposits() view returns (uint256)",
+  "function depositsAtDenomination(uint256) view returns (uint256)",
+  "function minAnonymitySet() view returns (uint256)",
+  "function minRootAge() view returns (uint256)",
+  "function tree() view returns (address)",
   "function betEncrypted(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 newCommitment, uint256 betMeta, uint256[4] ciphertext)",
   "function redeemPrivate(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 newCommitment, uint256 redeemMeta)",
   "function withdraw(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 changeCommitment, uint256 withdrawData)",
@@ -204,8 +209,13 @@ export async function connect() {
  */
 export async function poolInfo(signer, poolAddress = SHIELDED_POOL) {
   const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
-  const [collateralAddress, denomination] = await readWithRetry(() =>
-    Promise.all([pool.collateral(), pool.denomination()]),
+  const [collateralAddress, denomination, totalDeposits, minAnonymitySet] = await readWithRetry(() =>
+    Promise.all([
+      pool.collateral(),
+      pool.denomination(),
+      pool.totalDeposits(),
+      pool.minAnonymitySet(),
+    ]),
   );
 
   const collateral = new ethers.Contract(collateralAddress, ERC20_ABI, signer);
@@ -214,7 +224,65 @@ export async function poolInfo(signer, poolAddress = SHIELDED_POOL) {
     collateral.decimals().catch(() => 18),
   ]);
 
-  return { pool, collateral, collateralAddress, denomination, symbol, decimals };
+  return {
+    pool,
+    collateral,
+    collateralAddress,
+    denomination,
+    symbol,
+    decimals,
+    totalDeposits,
+    minAnonymitySet,
+    canBet: totalDeposits >= minAnonymitySet,
+  };
+}
+
+const TREE_ABI = ["function rootAge(uint256) view returns (uint256)"];
+
+/**
+ * How long the root a proof was built against still has to age before it may be spent.
+ *
+ * Checked BEFORE proving, not after. A revert costs the full declared gas limit -- Monad
+ * bills the limit, not the usage, and every action declares the same 2,500,000 for
+ * anti-fingerprinting -- so letting this reach the chain turns a two-minute wait into a paid
+ * failure. It also wastes several seconds of browser proving that was never going to be used.
+ *
+ * Returns `{ ok, age, need, waitSeconds }`. `waitSeconds` is what a user actually wants: how
+ * long until this works.
+ */
+export async function rootAgeInfo(signer, root, poolAddress = SHIELDED_POOL) {
+  const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
+  const [treeAddress, need] = await readWithRetry(() =>
+    Promise.all([pool.tree(), pool.minRootAge()]),
+  );
+
+  if (need === 0n) return { ok: true, age: 0n, need, waitSeconds: 0n };
+
+  const tree = new ethers.Contract(treeAddress, TREE_ABI, signer);
+  const age = await readWithRetry(() => tree.rootAge(root));
+
+  return {
+    ok: age >= need,
+    age,
+    need,
+    waitSeconds: age >= need ? 0n : need - age,
+  };
+}
+
+/**
+ * How big the crowd is at one rung of the ladder, and whether it is big enough to withdraw
+ * that amount without the amount itself naming you.
+ *
+ * Separate from `poolInfo` because it is per-amount and only matters at withdrawal time,
+ * where the amount becomes public. A bet publishes no amount at all, which is why the bet
+ * gate counts every deposit instead of one rung's -- see `ShieldedPool._requireAnonymitySet`.
+ */
+export async function rungInfo(signer, amount, poolAddress = SHIELDED_POOL) {
+  const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
+  const [count, need] = await readWithRetry(() =>
+    Promise.all([pool.depositsAtDenomination(amount), pool.minAnonymitySet()]),
+  );
+  return { count, need, ok: count >= need };
 }
 
 /**

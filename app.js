@@ -32,6 +32,8 @@ import {
   connect,
   marketInfo,
   poolInfo,
+  rungInfo,
+  rootAgeInfo,
   settlementInfo,
   committeeKey,
   submitDeposit,
@@ -144,12 +146,36 @@ async function betOnNote(commitment, side) {
     const marketId = BigInt($("market").value);
     if (marketId === 0n) return log("pick a market first");
 
+    // Checked here as well as on chain. The chain rejects AFTER the user has paid for the
+    // declared gas limit, and Monad bills the declared limit even on a revert -- so letting
+    // this reach the contract costs real money to be told something readable off chain.
+    const pool = await poolInfo(session.signer);
+    if (!pool.canBet) {
+      return log(
+        `\ncannot bet yet: the pool has ${pool.totalDeposits} deposit(s) and needs `
+        + `${pool.minAnonymitySet}. Betting into a crowd that small is not private, so the `
+        + `contract refuses it. Deposit again, or wait for others.`,
+      );
+    }
+
     log(`\nbetting ${side === 1n ? "YES" : "NO"} in market ${marketId} with ${short(commitment)}…`);
 
     const pubKey = await committeeKey(session.signer, Number(marketId));
     const elgamal = await core.buildElGamal(pubKey);
 
     const path = await pathForSpend(note);
+
+    // The root has to have aged before it can be spent, and a revert here costs the FULL
+    // declared gas limit -- Monad bills the limit, not the usage. Checked before proving so a
+    // two-minute wait stays a two-minute wait instead of becoming a paid failure.
+    const age = await rootAgeInfo(session.signer, path.root);
+    if (!age.ok) {
+      return log(
+        `\nthe note is grafted but its root is only ${age.age}s old; ${age.need}s is required. `
+        + `Try again in ${age.waitSeconds}s. Spending a note out of the batch that created it `
+        + `is what makes a deposit and its bet linkable by timing alone.`,
+      );
+    }
 
     const position = await createPositionNote({ marketId, units: note.units, outcome: side });
     await saveNote(position, { status: "unsubmitted", marketId: marketId.toString() });
@@ -225,6 +251,17 @@ async function redeemNote(commitment) {
 
     const path = await pathForSpend(note);
 
+    // Same reason as the bet path: a root-age revert costs the full declared gas limit, and
+    // the fix is to wait, not to retry.
+    const age = await rootAgeInfo(session.signer, path.root);
+    if (!age.ok) {
+      throw new Error(
+        `the note's root is only ${age.age}s old; ${age.need}s is required. Try again in `
+        + `${age.waitSeconds}s.`,
+      );
+    }
+
+
     const payoutNote = await createPositionNote({ marketId: note.marketId, units: payout, outcome: OUTCOME.SETTLED });
     await saveNote(payoutNote, { status: "unsubmitted", marketId: note.marketId.toString() });
     log(`  payout note ${short(payoutNote.commitment.toString())} (${payout} units) saved locally`);
@@ -280,8 +317,29 @@ async function withdrawNote(commitment, amountStr) {
       throw new Error(`amount must be between 1 and ${note.units}`);
     }
 
+    // The withdrawn amount is PUBLIC. A rung nobody else has used is an identifier, not a
+    // denomination, so the chain refuses it -- caught here for a readable reason.
+    const rung = await rungInfo(session.signer, amount);
+    if (!rung.ok) {
+      throw new Error(
+        `${amount} is too rare a size to withdraw privately: ${rung.count} deposit(s) have `
+        + `used it, ${rung.need} needed. Withdrawing it would name you regardless of the proof.`,
+      );
+    }
+
     const change = note.units - amount;
     const path = await pathForSpend(note);
+
+    // Same reason as the bet path: a root-age revert costs the full declared gas limit, and
+    // the fix is to wait, not to retry.
+    const age = await rootAgeInfo(session.signer, path.root);
+    if (!age.ok) {
+      throw new Error(
+        `the note's root is only ${age.age}s old; ${age.need}s is required. Try again in `
+        + `${age.waitSeconds}s.`,
+      );
+    }
+
 
     // The change note mirrors the note being spent on BOTH marketId and outcome, because
     // `withdraw.circom` builds it from the same signals. A SETTLED payout's change stays
@@ -422,11 +480,25 @@ async function showPool() {
     const info = await poolInfo(session.signer);
     const balance = await info.collateral.balanceOf(session.address);
 
+    // Stated as an UPPER BOUND, because that is what it is. The counter never decrements --
+    // it cannot, since decrementing would mean observing which notes are still unspent, and
+    // that is the fact the pool exists to hide. Rounding this up into "N people are hiding
+    // you" would be a claim the contract cannot support.
+    const crowd = info.canBet
+      ? `<span class="ok">${info.totalDeposits}</span> deposits, at most that many notes look `
+        + `like yours (${info.minAnonymitySet} needed to bet)`
+      : `<span class="bad">${info.totalDeposits} of ${info.minAnonymitySet}</span> — betting is `
+        + `blocked until the pool has a crowd to hide you in`;
+
     dl.innerHTML = `
       <dt>pool</dt><dd>${SHIELDED_POOL}</dd>
       <dt>collateral</dt><dd>${info.collateralAddress} (${info.symbol})</dd>
       <dt>denomination</dt><dd>${info.denomination}</dd>
+      <dt>anonymity set</dt><dd>${crowd}</dd>
       <dt>your balance</dt><dd>${balance}</dd>`;
+
+    // Depositing is never gated. Gating it would deadlock the pool: nobody could deposit
+    // until enough deposits existed.
     $("deposit").disabled = false;
   } catch (e) {
     dl.innerHTML = `<dt class="bad">error</dt><dd>${e.message}</dd>`;
