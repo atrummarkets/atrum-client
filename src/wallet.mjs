@@ -19,7 +19,16 @@ export const MONAD_TESTNET = {
   blockExplorerUrls: ["https://testnet.monadexplorer.com"],
 };
 
-export const SHIELDED_POOL = "0x6af21cA16B40ae5Ab154eE1867f30FC3E64BfBED";
+/**
+ * Redeployed 2026-08-02. The previous pool (0x6af21cA1...) is dead: its verifiers were
+ * baked against a zkey with different randomness than what circuits/build/ holds today, so
+ * every proof this client builds now fails ON THAT POOL with InvalidProof() -- the client is
+ * correct, the deployment underneath it went stale. See atrum-core HANDOFF.md.
+ *
+ * Byte-verified after deploy: `cast code` on this pool's DepositVerifier matches
+ * `forge inspect DepositVerifier deployedBytecode` exactly, sha256 identical.
+ */
+export const SHIELDED_POOL = "0x5Ede6585Ed62745E9b1a6b2F0c2Dd2e1ff5798a6";
 
 /**
  * Monad bills the DECLARED gas limit, not the gas used -- measured, not assumed. A 21,000-gas

@@ -136,7 +136,17 @@ cost. It disappears on any subsequent proof.)
 - [x] Sequencer CORS (in atrum-core, with tests on every branch)
 - [x] Witness building from **real notes** rather than the canned fixtures
 - [x] Wallet connection and transaction submission (`app.html`)
-- [ ] End-to-end: that same deposit landed on testnet — **needs a funded key**
+- [x] **End-to-end, on real testnet**: `0xc81678677ffbbd3a385bc514f075ae03252b60f8d58ef8af76ae856c7359060b`,
+      block 50188842, `status: SUCCESS` — see below
+- [ ] `betEncrypted`, `redeemPrivate`, `withdraw` on the client — only `deposit` is wired
+
+### The deployment moved on 2026-08-02
+
+`SHIELDED_POOL` points at `0x5Ede6585Ed62745E9b1a6b2F0c2Dd2e1ff5798a6`, not the address any
+earlier commit or conversation may reference. The previous pool's verifiers went stale after
+an unrelated circuit rebuild in atrum-core — same circuits, different verifying key, so
+every proof this client builds now fails `InvalidProof()` on the old pool. Not a client bug;
+full account in atrum-core's `deployments/monad-testnet-10143/README.md`.
 
 ## Submitting a real deposit
 
