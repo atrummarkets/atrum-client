@@ -468,6 +468,58 @@ $("export").onclick = async () => {
   log(`\nexported ${(await allNotes()).length} note(s)`);
 };
 
+// ---------------------------------------------------------------- markets registry
+
+const fmtTime = (unixSec) => new Date(unixSec * 1000).toLocaleString();
+
+/**
+ * markets.json, written by atrum-core's create-market.mjs. There is no on-chain way to
+ * enumerate "all markets" -- ShieldedPool has marketVault[id] lookups, not a list -- and this
+ * project's own rule is never build on eth_getLogs (100-block range cap on the public RPC).
+ * A committed registry is the alternative that needs no chain scanning.
+ */
+async function loadMarkets() {
+  let registry;
+  try {
+    registry = await (await fetch("./markets.json")).json();
+  } catch {
+    $("markets-body").innerHTML =
+      '<tr><td colspan="5" class="dim">no markets.json — run create-market.mjs in atrum-core</td></tr>';
+    return;
+  }
+
+  if (registry.pool && registry.pool.toLowerCase() !== SHIELDED_POOL.toLowerCase()) {
+    log(`\nwarning: markets.json is for pool ${registry.pool}, this page points at ${SHIELDED_POOL}`);
+  }
+
+  const markets = registry.markets ?? [];
+  const select = $("market");
+  const body = $("markets-body");
+
+  if (!markets.length) {
+    select.innerHTML = "";
+    body.innerHTML = '<tr><td colspan="5" class="dim">no markets yet — run create-market.mjs</td></tr>';
+    return;
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  select.innerHTML = markets
+    .map((m) => `<option value="${m.id}">#${m.id} — ${m.question}</option>`)
+    .join("");
+
+  body.innerHTML = markets
+    .map((m) => {
+      const closed = now >= m.bettingCloseTime;
+      return (
+        `<tr><td>${m.id}</td><td>${m.question}</td><td>${m.type}</td>` +
+        `<td class="${closed ? "bad" : "ok"}">${closed ? "closed" : "open"} (${fmtTime(m.bettingCloseTime)})</td>` +
+        `<td>${fmtTime(m.resolutionStartTime)}</td></tr>`
+      );
+    })
+    .join("");
+}
+
 await core.init();
 await renderNotes();
+await loadMarkets();
 log("ready — connect a wallet to begin");
