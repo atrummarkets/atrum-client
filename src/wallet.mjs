@@ -20,17 +20,20 @@ export const MONAD_TESTNET = {
 };
 
 /**
- * Redeployed 2026-08-02, with EXERCISE_MODE=1: betting closes 6 minutes after deploy,
- * resolution opens 1 hour after that -- the normal 7-day / 2-hour schedule makes redeem and
- * withdraw untestable in one sitting. `0x5Ede6585...` (the previous pool, normal schedule) is
- * superseded but not dead; this one exists purely so the full lifecycle fits in a session.
+ * Deployed 2026-08-02 with EXERCISE_MODE=1 (6-minute betting window, 1-hour resolution gap)
+ * and SEQUENCER pinned to the sequencer's first relayer address -- the default (deployer)
+ * leaves every flushBatch reverting once a real sequencer with its own relayer mnemonic
+ * runs against it. See atrum-core HANDOFF.md's "0-ter" for why both of those matter.
  *
- * The pool before THAT, `0x6af21cA1...`, is actually dead -- its verifiers were baked
- * against a zkey with different randomness than circuits/build/ holds now. See atrum-core
- * HANDOFF.md and deployments/monad-testnet-10143/README.md for the full chain of incidents.
+ * PROVEN, not just deployed: the entire lifecycle ran against this pool through this exact
+ * client code -- deposit, betEncrypted, resolve, publishFinalTotals, redeemPrivate, withdraw,
+ * six real transactions, `Withdrawn` event confirmed from the raw log. Block numbers in
+ * atrum-core HANDOFF.md "0-ter".
  *
- * Byte-verified after deploy: all four verifiers' on-chain bytecode matches
- * `forge inspect <Name> deployedBytecode` exactly, sha256 identical.
+ * Earlier pools: `0x5Ede6585...` (normal 7-day schedule, still valid, just untestable in one
+ * sitting) and `0x6af21cA1...` (actually dead -- verifiers baked against a zkey circuits/
+ * build/ no longer holds). Byte-verified after deploy: all four verifiers' on-chain bytecode
+ * matches `forge inspect <Name> deployedBytecode` exactly, sha256 identical.
  */
 export const SHIELDED_POOL = "0xa54cc8AC537E64f70e1b842A9edc4169ed22D06f";
 

@@ -136,19 +136,32 @@ cost. It disappears on any subsequent proof.)
 - [x] Sequencer CORS (in atrum-core, with tests on every branch)
 - [x] Witness building from **real notes** rather than the canned fixtures
 - [x] Wallet connection and transaction submission (`app.html`)
-- [x] **End-to-end, on real testnet**: `0xc81678677ffbbd3a385bc514f075ae03252b60f8d58ef8af76ae856c7359060b`,
-      block 50188842, `status: SUCCESS` — see below
-- [ ] `betEncrypted`, `redeemPrivate`, `withdraw` on the client — only `deposit` is wired
+- [x] `betEncrypted`, `redeemPrivate`, `withdraw` all wired — the notes table itself is the
+      action launcher: what a note can do next comes from its own state (`noteRole`)
+- [x] **The full lifecycle, verified live** — deposit, bet, resolve, settle, redeem, withdraw,
+      six real transactions on Monad testnet, every one built by this exact client code
+      (`scripts/live-loop.mjs` drove `app.html` headlessly with a real funded wallet, not a
+      mock of the client). Block numbers and tx hashes in atrum-core `HANDOFF.md` "0-ter".
 
-### The deployment moved on 2026-08-02
+### The deployment moves whenever the circuits do
 
-`SHIELDED_POOL` points at `0x5Ede6585Ed62745E9b1a6b2F0c2Dd2e1ff5798a6`, not the address any
-earlier commit or conversation may reference. The previous pool's verifiers went stale after
-an unrelated circuit rebuild in atrum-core — same circuits, different verifying key, so
-every proof this client builds now fails `InvalidProof()` on the old pool. Not a client bug;
-full account in atrum-core's `deployments/monad-testnet-10143/README.md`.
+`SHIELDED_POOL` currently points at `0xa54cc8AC537E64f70e1b842A9edc4169ed22D06f`. Two earlier
+pools are referenced in older commits/conversation and should not be used: `0x5Ede6585...`
+(still valid, normal 7-day betting window — just not what this constant points at) and
+`0x6af21cA1...` (actually dead — its verifiers were baked against a zkey circuits/build/ no
+longer holds, so every proof fails `InvalidProof()` there). Full account of both in
+atrum-core's `deployments/monad-testnet-10143/README.md` and `HANDOFF.md`.
 
-## Submitting a real deposit
+**Running your own sequencer against this pool?** Two things that will otherwise cost an
+hour: the sequencer's default port (`:8080`) collides with this app's own dev server — run it
+with `PORT=8081` (matches `src/sequencer.mjs`'s default). And `ShieldedPool.onlySequencer`
+authorizes exactly one fixed address, set at deploy time (`SEQUENCER` env var) — it does not
+automatically accept whichever relayer your `RELAYER_MNEMONIC` happens to rotate to next. If
+`flushBatch` reverts with `NotSequencer()`, that mismatch is why.
+
+## Using the client
+
+**By hand**, with a real wallet extension:
 
 ```bash
 npm run harness   # serves everything; open http://localhost:8080/app.html
@@ -158,13 +171,33 @@ Connect a wallet on Monad testnet (chain 10143). The page reads the vault, colla
 and denomination **from the chain**, starting at the pool address — nothing about the
 deployment is hardcoded here except `ShieldedPool`, because addresses copied into a frontend
 go stale silently, which is how this project already shipped a market that could never settle.
+Every note gets an action button in the "Your notes" table driven by its own state — deposit
+an unbet note to get a "Bet" button, a position note gets "Redeem" once the market is resolved
+and settled, a settled note gets "Withdraw".
 
-You need, on the connected account:
+**Scripted**, with a real wallet but no browser interaction:
+
+```bash
+PRIVATE_KEY=0x... node scripts/live-loop.mjs deposit
+PRIVATE_KEY=0x... node scripts/live-loop.mjs bet YES     # or NO
+PRIVATE_KEY=0x... node scripts/live-loop.mjs redeem
+PRIVATE_KEY=0x... node scripts/live-loop.mjs withdraw <amount>
+```
+
+Drives the real `app.html` headlessly with a real funded `ethers.Wallet` standing in for
+MetaMask — `window.ethereum.request` signs and broadcasts through it directly, every read
+forwards to testnet RPC. This is not a simulation of the client; it is the client, with a
+scriptable wallet. Persists a real browser profile (`.live-loop-profile/`, gitignored) across
+invocations, same as a human's notes would persist across tabs.
+
+You need, on the connected/private-key account:
 
 - **MON** for gas. Every shielded action declares the same 2,500,000 limit, and Monad bills
   the *declared* limit rather than the gas used — measured, not assumed. That uniformity is an
   anti-fingerprinting rule, so the client does not let the wallet estimate per action.
 - **Collateral**, which is a `MockERC20` on this deployment and has to be minted to you.
+- A **sequencer running against this pool** for anything past deposit — see the port and
+  `SEQUENCER`-address notes above. Nothing here starts one for you.
 
 > **This deployment is not private.** The committee key it encrypts against is a test key with
 > a published secret, so anyone can decrypt every bet. That holds until the trusted-setup
