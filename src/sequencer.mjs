@@ -70,3 +70,43 @@ export async function health({ baseUrl = DEFAULT_URL } = {}) {
   if (!res.ok) throw new Error(`sequencer unhealthy: ${res.status}`);
   return res.json();
 }
+
+/**
+ * Submit an action through the relayer, so this wallet's address never touches the chain.
+ *
+ * WHY THIS EXISTS AT ALL. Every proof in this client carefully hides which note was spent and
+ * how much was staked -- and then, submitted directly, the transaction's `from` field names
+ * the user anyway. Combined with `betMeta`, which carries the outcome in the clear, the chain
+ * reads "0xYou bet YES". Relaying is what makes the rest of the cryptography mean anything.
+ *
+ * Only the three proof-gated actions are accepted. `deposit` is not relayable: it pulls
+ * collateral via `transferFrom(msg.sender)`, so a relayer submitting it would have to hold
+ * the money first -- the same link, one hop along.
+ *
+ * WHAT THIS DOES NOT DO: the relayer sees your network address and your proof. Trust is moved,
+ * not removed. It can also refuse to submit, which is a second censorship point after the
+ * sequencer. Neither is fixed here.
+ *
+ * @param calldata snarkjs `exportSolidityCallData` output -- NOT the raw proof (the G2 swap)
+ * @param tail     the action's arguments after pA/pB/pC, already ordered
+ */
+export async function relay(action, { calldata, tail, baseUrl = DEFAULT_URL }) {
+  const flat = JSON.parse(`[${calldata}]`);
+  const [pA, pB, pC] = flat;
+
+  const res = await fetch(`${baseUrl}/relay`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action,
+      pA: pA.map(String),
+      pB: pB.map((row) => row.map(String)),
+      pC: pC.map(String),
+      args: tail,
+    }),
+  });
+
+  const body = await res.json().catch(() => ({ error: `relayer returned ${res.status}` }));
+  if (!res.ok) throw new Error(body.error ?? `relayer returned ${res.status}`);
+  return body;
+}

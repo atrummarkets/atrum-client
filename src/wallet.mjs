@@ -9,6 +9,34 @@
  */
 
 import { ethers } from "../public/vendor/ethers.min.js";
+import { relay } from "./sequencer.mjs";
+
+/**
+ * Whether to route actions through the relayer.
+ *
+ * Defaults ON. Submitting from your own wallet publishes your address next to every action,
+ * which defeats the point of the proofs — so the private path is the default and the public
+ * one is the deliberate opt-out, not the reverse. Set `localStorage.atrumRelay = "off"` to
+ * submit directly (useful when no relayer is running).
+ */
+export function useRelay() {
+  try {
+    return globalThis.localStorage?.getItem("atrumRelay") !== "off";
+  } catch {
+    return true;
+  }
+}
+
+/** Normalise a relayer response into the same shape a direct submission returns. */
+function relayed(body) {
+  return {
+    hash: body.hash,
+    blockNumber: body.blockNumber,
+    gasUsed: BigInt(body.gasUsed ?? 0),
+    relayer: body.relayer,
+    explorer: `${MONAD_TESTNET.blockExplorerUrls[0]}/tx/${body.hash}`,
+  };
+}
 
 /** Monad testnet. Chain IDs were re-measured against live nodes: 143 mainnet, 10143 testnet. */
 export const MONAD_TESTNET = {
@@ -339,7 +367,17 @@ export async function submitBet({
   if (!info.encrypted) throw new Error(`market ${marketId} is not an encrypted market`);
   if (info.closed) throw new Error(`betting closed for market ${marketId}`);
 
-  onStatus?.("submitting bet…");
+  if (useRelay()) {
+    onStatus?.("relaying bet (your address stays off chain)…");
+    return relayed(
+      await relay("betEncrypted", {
+        calldata,
+        tail: [root, nullifierHash, newCommitment, betMeta, [c1x, c1y, c2x, c2y]],
+      }),
+    );
+  }
+
+  onStatus?.("submitting bet from YOUR address (relaying disabled — this is public)…");
   const tx = await info.pool.betEncrypted(
     pA,
     pB,
@@ -393,7 +431,17 @@ export async function submitRedeem({
     throw new Error(`market ${marketId} resolved but totals are not published yet — settle it first`);
   }
 
-  onStatus?.("submitting redeem…");
+  if (useRelay()) {
+    onStatus?.("relaying redeem (your address stays off chain)…");
+    return relayed(
+      await relay("redeemPrivate", {
+        calldata,
+        tail: [root, nullifierHash, newCommitment, redeemMeta],
+      }),
+    );
+  }
+
+  onStatus?.("submitting redeem from YOUR address (relaying disabled — this is public)…");
   const tx = await info.pool.redeemPrivate(pA, pB, pC, root, nullifierHash, newCommitment, redeemMeta, {
     gasLimit: ACTION_GAS_LIMIT,
   });
@@ -431,7 +479,19 @@ export async function submitWithdraw({
   const info = await marketInfo(signer, marketId, poolAddress);
   if (!info.vault) throw new Error(info.reason);
 
-  onStatus?.("submitting withdraw…");
+  if (useRelay()) {
+    // The relayer cannot redirect this: `recipient` lives inside `withdrawData`, which is a
+    // public signal of the proof. Changing it invalidates the proof.
+    onStatus?.("relaying withdraw (your address stays off chain)…");
+    return relayed(
+      await relay("withdraw", {
+        calldata,
+        tail: [root, nullifierHash, changeCommitment, withdrawData],
+      }),
+    );
+  }
+
+  onStatus?.("submitting withdraw from YOUR address (relaying disabled — this is public)…");
   const tx = await info.pool.withdraw(pA, pB, pC, root, nullifierHash, changeCommitment, withdrawData, {
     gasLimit: ACTION_GAS_LIMIT,
   });
