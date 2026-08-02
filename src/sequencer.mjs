@@ -7,7 +7,11 @@
  * produce a proof itself.
  */
 
-const DEFAULT_URL = "http://localhost:8080";
+// NOT :8080 -- that's where `npm run harness` serves this app itself
+// (`http-server . -p 8080`). Running both on the same port silently serves one or the other
+// depending on start order, which is a confusing way to lose an afternoon. The sequencer
+// must be started with PORT=8081 to match.
+const DEFAULT_URL = "http://localhost:8081";
 
 export class NotYetGrafted extends Error {
   constructor(commitment) {

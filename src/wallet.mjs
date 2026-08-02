@@ -20,15 +20,19 @@ export const MONAD_TESTNET = {
 };
 
 /**
- * Redeployed 2026-08-02. The previous pool (0x6af21cA1...) is dead: its verifiers were
- * baked against a zkey with different randomness than what circuits/build/ holds today, so
- * every proof this client builds now fails ON THAT POOL with InvalidProof() -- the client is
- * correct, the deployment underneath it went stale. See atrum-core HANDOFF.md.
+ * Redeployed 2026-08-02, with EXERCISE_MODE=1: betting closes 6 minutes after deploy,
+ * resolution opens 1 hour after that -- the normal 7-day / 2-hour schedule makes redeem and
+ * withdraw untestable in one sitting. `0x5Ede6585...` (the previous pool, normal schedule) is
+ * superseded but not dead; this one exists purely so the full lifecycle fits in a session.
  *
- * Byte-verified after deploy: `cast code` on this pool's DepositVerifier matches
- * `forge inspect DepositVerifier deployedBytecode` exactly, sha256 identical.
+ * The pool before THAT, `0x6af21cA1...`, is actually dead -- its verifiers were baked
+ * against a zkey with different randomness than circuits/build/ holds now. See atrum-core
+ * HANDOFF.md and deployments/monad-testnet-10143/README.md for the full chain of incidents.
+ *
+ * Byte-verified after deploy: all four verifiers' on-chain bytecode matches
+ * `forge inspect <Name> deployedBytecode` exactly, sha256 identical.
  */
-export const SHIELDED_POOL = "0x5Ede6585Ed62745E9b1a6b2F0c2Dd2e1ff5798a6";
+export const SHIELDED_POOL = "0xa54cc8AC537E64f70e1b842A9edc4169ed22D06f";
 
 /**
  * Monad bills the DECLARED gas limit, not the gas used -- measured, not assumed. A 21,000-gas
@@ -47,14 +51,30 @@ export const ACTION_GAS_LIMIT = 2_500_000n;
 const POOL_ABI = [
   "function marketVault(uint32) view returns (address)",
   "function encryptedMarket(uint32) view returns (bool)",
+  "function encryptedTotals() view returns (address)",
   "function deposit(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 commitment, uint32 marketId, uint256 units)",
   "function betEncrypted(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 newCommitment, uint256 betMeta, uint256[4] ciphertext)",
+  "function redeemPrivate(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 newCommitment, uint256 redeemMeta)",
+  "function withdraw(uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256 root, uint256 nullifierHash, uint256 changeCommitment, uint256 withdrawData)",
 ];
 
 const VAULT_ABI = [
   "function collateral() view returns (address)",
   "function denomination() view returns (uint256)",
   "function bettingCloseTime() view returns (uint256)",
+  "function resolutionStartTime() view returns (uint256)",
+  "function outcome() view returns (uint8)",
+];
+
+/** `Vault.Outcome`, mirrored -- 0 Unresolved, 1 YES, 2 NO, 3 Void. */
+export const VAULT_OUTCOME = { UNRESOLVED: 0n, YES: 1n, NO: 2n, VOID: 3n };
+
+const ENCRYPTED_TOTALS_ABI = [
+  "function finalYesTotal(uint32) view returns (uint256)",
+  "function finalNoTotal(uint32) view returns (uint256)",
+  "function settled(uint32) view returns (bool)",
+  "function committeeKeyX() view returns (uint256)",
+  "function committeeKeyY() view returns (uint256)",
 ];
 
 const ERC20_ABI = [
@@ -128,6 +148,63 @@ export async function marketInfo(signer, marketId, poolAddress = SHIELDED_POOL) 
     decimals,
     closed: BigInt(Math.floor(Date.now() / 1000)) >= bettingCloseTime,
   };
+}
+
+/**
+ * `marketInfo` plus resolution/settlement state -- what `redeemPrivate` needs to check
+ * before it is worth building a proof at all.
+ *
+ * `settled` follows the contract's own rule (`ShieldedPool._checkRedeemMeta`), not an
+ * approximation of it: a Void market skips the settlement requirement entirely (the refund
+ * path needs no published totals), everything else needs `encryptedTotals.settled(marketId)`
+ * to be true. Getting this wrong here just means a wasted proof, not a wrong redemption --
+ * the contract enforces the real rule regardless -- but there is no reason to make someone
+ * pay to prove something that was always going to revert.
+ */
+export async function settlementInfo(signer, marketId, poolAddress = SHIELDED_POOL) {
+  const info = await marketInfo(signer, marketId, poolAddress);
+  if (!info.vault) return info;
+
+  const outcome = await info.vault.outcome();
+  const base = { ...info, outcome };
+
+  if (outcome === VAULT_OUTCOME.UNRESOLVED) return { ...base, settled: false };
+  if (outcome === VAULT_OUTCOME.VOID) return { ...base, settled: true }; // needs no published totals
+
+  const totalsAddress = await info.pool.encryptedTotals();
+  if (totalsAddress === ethers.ZeroAddress) {
+    return { ...base, settled: false, reason: "encryptedTotals is not bound on this pool yet" };
+  }
+
+  const totals = new ethers.Contract(totalsAddress, ENCRYPTED_TOTALS_ABI, signer);
+  const settled = await totals.settled(marketId);
+  if (!settled) return { ...base, settled: false };
+
+  const [finalYesTotal, finalNoTotal] = await Promise.all([
+    totals.finalYesTotal(marketId),
+    totals.finalNoTotal(marketId),
+  ]);
+  return { ...base, settled: true, finalYesTotal, finalNoTotal, totalsAddress };
+}
+
+/**
+ * The committee public key this deployment encrypts against -- read from chain, not
+ * hardcoded, for the same reason nothing else here is. Public only; encrypting a bet needs
+ * no secret, which is the whole point of ElGamal.
+ *
+ * THIS DEPLOYMENT'S COMMITTEE SECRET IS PUBLISHED (see the banner in app.html). Reading the
+ * public key here does not change that -- it is stated so nobody mistakes "the client never
+ * touches the secret" for "this is private," which it is not until the ceremony runs.
+ */
+export async function committeeKey(signer, marketId, poolAddress = SHIELDED_POOL) {
+  const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
+  const totalsAddress = await pool.encryptedTotals();
+  if (totalsAddress === ethers.ZeroAddress) {
+    throw new Error("encryptedTotals is not bound on this pool yet");
+  }
+  const totals = new ethers.Contract(totalsAddress, ENCRYPTED_TOTALS_ABI, signer);
+  const [x, y] = await Promise.all([totals.committeeKeyX(), totals.committeeKeyY()]);
+  return [x, y];
 }
 
 /**
@@ -211,6 +288,143 @@ export async function submitDeposit({ signer, note, calldata, marketId, poolAddr
 
   return {
     approvalTx,
+    hash: tx.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed,
+    explorer: `${MONAD_TESTNET.blockExplorerUrls[0]}/tx/${tx.hash}`,
+  };
+}
+
+/**
+ * Submit an encrypted bet.
+ *
+ * Unlike deposit, this spends a note as well as producing one, and the spend needs a
+ * Merkle path -- but that path has to exist BEFORE the proof is built (`betInput` takes it
+ * as an argument), so fetching it belongs to the proving step in app.js, not here. By
+ * submission time the path is already baked into `calldata`'s `root`; this function only
+ * checks what remains checkable without re-deriving it.
+ */
+export async function submitBet({
+  signer,
+  positionNote,
+  calldata,
+  marketId,
+  poolAddress = SHIELDED_POOL,
+  onStatus,
+}) {
+  const { pA, pB, pC, publicSignals } = parseCalldata(calldata);
+  const [root, nullifierHash, newCommitment, betMeta, c1x, c1y, c2x, c2y] = publicSignals;
+
+  if (BigInt(newCommitment) !== positionNote.commitment) {
+    throw new Error("proof's new commitment does not match the position note — refusing to submit");
+  }
+
+  const info = await marketInfo(signer, marketId, poolAddress);
+  if (!info.vault) throw new Error(info.reason);
+  if (!info.encrypted) throw new Error(`market ${marketId} is not an encrypted market`);
+  if (info.closed) throw new Error(`betting closed for market ${marketId}`);
+
+  onStatus?.("submitting bet…");
+  const tx = await info.pool.betEncrypted(
+    pA,
+    pB,
+    pC,
+    root,
+    nullifierHash,
+    newCommitment,
+    betMeta,
+    [c1x, c1y, c2x, c2y],
+    { gasLimit: ACTION_GAS_LIMIT },
+  );
+
+  onStatus?.(`bet sent (${tx.hash}), waiting for inclusion…`);
+  const receipt = await tx.wait();
+
+  return {
+    hash: tx.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed,
+    explorer: `${MONAD_TESTNET.blockExplorerUrls[0]}/tx/${tx.hash}`,
+  };
+}
+
+/**
+ * Submit a private redemption: burn a position note, receive a SETTLED payout note.
+ *
+ * Checked against `settlementInfo`'s rule, not a copy of it -- see that function's
+ * docstring for why Void skips the settlement requirement and everything else does not.
+ */
+export async function submitRedeem({
+  signer,
+  payoutNote,
+  calldata,
+  marketId,
+  poolAddress = SHIELDED_POOL,
+  onStatus,
+}) {
+  const { pA, pB, pC, publicSignals } = parseCalldata(calldata);
+  const [root, nullifierHash, newCommitment, redeemMeta] = publicSignals;
+
+  if (BigInt(newCommitment) !== payoutNote.commitment) {
+    throw new Error("proof's new commitment does not match the payout note — refusing to submit");
+  }
+
+  const info = await settlementInfo(signer, marketId, poolAddress);
+  if (!info.vault) throw new Error(info.reason);
+  if (info.outcome === VAULT_OUTCOME.UNRESOLVED) {
+    throw new Error(`market ${marketId} has not been resolved yet`);
+  }
+  if (info.outcome !== VAULT_OUTCOME.VOID && !info.settled) {
+    throw new Error(`market ${marketId} resolved but totals are not published yet — settle it first`);
+  }
+
+  onStatus?.("submitting redeem…");
+  const tx = await info.pool.redeemPrivate(pA, pB, pC, root, nullifierHash, newCommitment, redeemMeta, {
+    gasLimit: ACTION_GAS_LIMIT,
+  });
+
+  onStatus?.(`redeem sent (${tx.hash}), waiting for inclusion…`);
+  const receipt = await tx.wait();
+
+  return {
+    hash: tx.hash,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed,
+    explorer: `${MONAD_TESTNET.blockExplorerUrls[0]}/tx/${tx.hash}`,
+  };
+}
+
+/**
+ * Submit a withdrawal: burn a SETTLED note, move `amount` to `recipient` publicly, keep
+ * `change` as a new SETTLED note.
+ */
+export async function submitWithdraw({
+  signer,
+  changeNote,
+  calldata,
+  marketId,
+  poolAddress = SHIELDED_POOL,
+  onStatus,
+}) {
+  const { pA, pB, pC, publicSignals } = parseCalldata(calldata);
+  const [root, nullifierHash, changeCommitment, withdrawData] = publicSignals;
+
+  if (BigInt(changeCommitment) !== changeNote.commitment) {
+    throw new Error("proof's change commitment does not match the change note — refusing to submit");
+  }
+
+  const info = await marketInfo(signer, marketId, poolAddress);
+  if (!info.vault) throw new Error(info.reason);
+
+  onStatus?.("submitting withdraw…");
+  const tx = await info.pool.withdraw(pA, pB, pC, root, nullifierHash, changeCommitment, withdrawData, {
+    gasLimit: ACTION_GAS_LIMIT,
+  });
+
+  onStatus?.(`withdraw sent (${tx.hash}), waiting for inclusion…`);
+  const receipt = await tx.wait();
+
+  return {
     hash: tx.hash,
     blockNumber: receipt.blockNumber,
     gasUsed: receipt.gasUsed,
