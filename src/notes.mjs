@@ -152,6 +152,120 @@ export async function betInput({ spend, position, path, elgamal }) {
   };
 }
 
+/**
+ * Circuit input for `redeem_private`: spend a position note (or an unbet one, for a void
+ * refund), emit a SETTLED payout note.
+ *
+ * `payout` and `remainder` are NOT passed through -- the client computes them, because the
+ * circuit constrains `units * totalPool == payout * winningPool + remainder` and a caller
+ * that got the division wrong needs to find out here, not after paying to build a proof the
+ * circuit will refuse to satisfy.
+ *
+ * @param spend       the position note being redeemed (outcome YES/NO, or UNBET for void)
+ * @param payoutNote  a SETTLED note holding exactly the computed payout, from
+ *                    `createPositionNote({ outcome: OUTCOME.SETTLED, units: payout })`
+ * @param path        from the sequencer
+ * @param totalPool   `EncryptedParimutuelPool.finalYesTotal + finalNoTotal`, read from chain
+ * @param winningPool the winning side's total (or the shared value, for a void refund)
+ */
+export function redeemInput({ spend, payoutNote, path, totalPool, winningPool }) {
+  // The four-outcome scheme (HANDOFF §1c) closes the mint loop by construction: a SETTLED
+  // note is never itself redeemable, so there is no way to launder a payout back into a new
+  // payout. Enforcing it here is a courtesy -- the circuit already refuses `outcome == 3`.
+  if (spend.outcome === OUTCOME.SETTLED) {
+    throw new Error("a settled note cannot be redeemed again -- withdraw it instead");
+  }
+  if (winningPool === 0n) throw new Error("winningPool is zero -- division is undefined");
+
+  const numerator = spend.units * totalPool;
+  const payout = numerator / winningPool; // BigInt division truncates down, same as the circuit
+  const remainder = numerator - payout * winningPool;
+
+  if (payoutNote.outcome !== OUTCOME.SETTLED) {
+    throw new Error("the redeem output note must be outcome SETTLED");
+  }
+  if (payoutNote.units !== payout) {
+    throw new Error(
+      `payout note holds ${payoutNote.units} units but the settled totals imply ${payout} -- `
+        + "rebuild it with createPositionNote before proving",
+    );
+  }
+
+  return {
+    root: path.root.toString(),
+    nullifierHash: core.nullifierHash(spend.nullifier).toString(),
+    newCommitment: payoutNote.commitment.toString(),
+    redeemMeta: core.packRedeemMeta(spend.marketId, spend.outcome, totalPool, winningPool).toString(),
+    nullifier: spend.nullifier.toString(),
+    secret: spend.secret.toString(),
+    newNullifier: payoutNote.nullifier.toString(),
+    newSecret: payoutNote.secret.toString(),
+    marketId: spend.marketId.toString(),
+    outcome: spend.outcome.toString(),
+    units: spend.units.toString(),
+    totalPool: totalPool.toString(),
+    winningPool: winningPool.toString(),
+    payout: payout.toString(),
+    remainder: remainder.toString(),
+    pathElements: path.pathElements.map(String),
+    pathIndices: path.pathIndices.map(String),
+  };
+}
+
+/**
+ * Circuit input for `withdraw`: spend a SETTLED note, pay `amount` out publicly, keep
+ * `change` as a new SETTLED note.
+ *
+ * `amount` and `recipient` are public on chain by necessity -- real collateral moves.
+ * Privacy here comes from unlinkability, not secrecy: withdrawing round denominations
+ * (rather than the note's exact, identifying value) is what keeps withdrawals from
+ * fingerprinting the position that funded them. This function does not enforce that choice;
+ * it enforces only that the arithmetic is consistent.
+ *
+ * @param spend      a SETTLED note
+ * @param recipient  where the public payout goes
+ * @param amount     units to make public and pay out (<= spend.units)
+ * @param changeNote a SETTLED note holding exactly `spend.units - amount`
+ * @param path       from the sequencer
+ */
+export function withdrawInput({ spend, recipient, amount, changeNote, path }) {
+  if (spend.outcome !== OUTCOME.SETTLED) {
+    throw new Error("only a SETTLED note can be withdrawn -- redeem it first");
+  }
+  if (amount <= 0n) throw new Error("withdraw amount must be positive");
+  if (amount > spend.units) throw new Error("withdraw amount exceeds the note's units");
+
+  const change = spend.units - amount;
+
+  if (changeNote.outcome !== OUTCOME.SETTLED) {
+    throw new Error("the withdraw change note must be outcome SETTLED");
+  }
+  if (changeNote.units !== change) {
+    throw new Error(
+      `change note holds ${changeNote.units} units but ${change} is expected -- `
+        + "rebuild it with createPositionNote before proving",
+    );
+  }
+
+  return {
+    root: path.root.toString(),
+    nullifierHash: core.nullifierHash(spend.nullifier).toString(),
+    changeCommitment: changeNote.commitment.toString(),
+    withdrawData: core.packWithdrawData(spend.marketId, recipient, amount).toString(),
+    nullifier: spend.nullifier.toString(),
+    secret: spend.secret.toString(),
+    newNullifier: changeNote.nullifier.toString(),
+    newSecret: changeNote.secret.toString(),
+    marketId: spend.marketId.toString(),
+    units: spend.units.toString(),
+    recipient: BigInt(recipient).toString(),
+    amount: amount.toString(),
+    change: change.toString(),
+    pathElements: path.pathElements.map(String),
+    pathIndices: path.pathIndices.map(String),
+  };
+}
+
 // ---------------------------------------------------------------- persistence
 
 function openDb() {
@@ -191,6 +305,50 @@ export async function saveNote(note, meta = {}) {
   });
   db.close();
   return record;
+}
+
+/**
+ * Mark a note spent. Call this AFTER the transaction that spends it confirms, never before
+ * -- a reverted transaction must not orphan a note that was never actually spent, which is
+ * exactly the ordering `saveNote` already enforces on the note a spend PRODUCES.
+ */
+export async function markSpent(commitment, meta = {}) {
+  const db = await openDb();
+  const id = commitment.toString();
+  const record = await new Promise((resolve, reject) => {
+    const req = db.transaction(STORE, "readonly").objectStore(STORE).get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  if (!record) {
+    db.close();
+    throw new Error(`no saved note for commitment ${id} -- cannot mark it spent`);
+  }
+  const updated = { ...record, ...meta, status: "spent", spentAt: Date.now() };
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(updated);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+  return deserialise(updated);
+}
+
+/**
+ * What a note is usable for, from its own state alone -- no chain call.
+ *
+ * Does NOT check whether the sequencer has grafted it yet; a note can be `bettable` by this
+ * function and still 400 from `pathFor` for another minute or so. That is a live-state
+ * question this function has no way to answer, so callers check it separately and treat the
+ * 400 as "wait," not as an error.
+ */
+export function noteRole(note) {
+  if (note.status === "spent") return "spent";
+  if (note.outcome === OUTCOME.UNBET) return "bettable";
+  if (note.outcome === OUTCOME.YES || note.outcome === OUTCOME.NO) return "redeemable";
+  if (note.outcome === OUTCOME.SETTLED) return "withdrawable";
+  return "unknown";
 }
 
 export async function allNotes() {
