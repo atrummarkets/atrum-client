@@ -173,6 +173,19 @@ if (cmd === "status") {
   console.log("notes:");
   for (const r of rows) console.log("  " + r.join(" | "));
 } else if (cmd === "deposit") {
+  // Pick the market explicitly. The dropdown defaults to the first entry in markets.json,
+  // which is whichever market was registered earliest -- very likely one whose betting has
+  // already closed. Depositing into a closed market produces a note that can never be bet.
+  if (arg) {
+    await page.selectOption("#market", arg);
+    // Wait for the button, not for a duration. Selecting a market triggers showMarket(),
+    // which makes several chain reads before deciding whether betting is open -- a fixed
+    // sleep is a guess that fails whenever the RPC is slower than the guess.
+    await page.waitForFunction(() => !document.getElementById("deposit").disabled, null, {
+      timeout: 30000,
+    });
+    console.log(`market set to #${arg}`);
+  }
   await page.click("#deposit");
   await Promise.race([waitLogContains("DEPOSITED"), waitLogContains("FAILED")]);
   await drainLog();

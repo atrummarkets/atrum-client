@@ -324,14 +324,31 @@ $("refresh-markets").onclick = loadMarkets;
 
 // ---------------------------------------------------------------- wallet + deposit
 
+/**
+ * Guards against a stale market read winning a race.
+ *
+ * `showMarket` reads the selected market, then makes several chain calls before deciding
+ * whether the deposit button should be enabled. Switch markets while one is in flight and two
+ * overlap — whichever resolves LAST writes the button state, which may be the one describing
+ * the market you just navigated away from. The symptom is a deposit button disabled for an
+ * open market (or worse, enabled for a closed one) with no way to tell why.
+ */
+let marketReadSeq = 0;
+
 async function showMarket() {
   if (!session) return;
+  const seq = ++marketReadSeq;
   const marketId = Number($("market").value);
   const dl = $("market-info");
   dl.innerHTML = '<dt>reading…</dt><dd></dd>';
 
+  // Only the most recent read may touch the DOM.
+  const current = () => seq === marketReadSeq;
+
   try {
     const info = await marketInfo(session.signer, marketId);
+    if (!current()) return;
+
     if (!info.vault) {
       dl.innerHTML = `<dt class="bad">unavailable</dt><dd>${info.reason}</dd>`;
       $("deposit").disabled = true;
@@ -339,6 +356,8 @@ async function showMarket() {
     }
 
     const balance = await info.collateral.balanceOf(session.address);
+    if (!current()) return;
+
     dl.innerHTML = `
       <dt>vault</dt><dd>${info.vaultAddress}</dd>
       <dt>collateral</dt><dd>${info.collateralAddress} (${info.symbol})</dd>
@@ -348,6 +367,7 @@ async function showMarket() {
       <dt>your balance</dt><dd>${balance}</dd>`;
     $("deposit").disabled = info.closed;
   } catch (e) {
+    if (!current()) return;
     dl.innerHTML = `<dt class="bad">error</dt><dd>${e.message}</dd>`;
   }
 }
@@ -500,24 +520,18 @@ async function loadMarkets() {
   // Resolved/settled is PUBLIC chain state -- read-only, needs no wallet connection. Each
   // market gets its own row rather than one shared status block, so nothing implies the
   // status shown belongs to whichever market happens to be selected elsewhere on the page.
+  // SEQUENTIAL, not Promise.all. Each settlementInfo is ~8 chain reads, so firing every
+  // market at once is a burst that the public RPC answers with HTTP 429 -- which then
+  // surfaces as "missing revert data" on a market that is perfectly fine. Markets are few
+  // and this is not latency-critical; the retry/backoff in wallet.mjs handles what is left.
   const provider = readOnlyProvider();
-  await Promise.all(
-    markets.map(async (m) => {
+  for (const m of markets) {
+    await (async () => {
       const row = document.querySelector(`tr[data-market-row="${m.id}"]`);
       if (!row) return;
       const [, , , , resolvedCell, settledCell] = row.children;
       try {
-        // The public RPC is flaky on eth_call, empirically -- the exact same call has been
-        // observed to succeed and then fail seconds apart with no state change in between.
-        // One retry absorbs that without hiding a REAL failure, since a genuinely broken
-        // call fails the same way twice.
-        let info;
-        try {
-          info = await settlementInfo(provider, m.id, registry.pool ?? SHIELDED_POOL);
-        } catch {
-          await new Promise((r) => setTimeout(r, 500));
-          info = await settlementInfo(provider, m.id, registry.pool ?? SHIELDED_POOL);
-        }
+        const info = await settlementInfo(provider, m.id, registry.pool ?? SHIELDED_POOL);
         if (!info.vault) {
           resolvedCell.textContent = "unavailable";
           settledCell.textContent = info.reason ?? "";
@@ -537,8 +551,8 @@ async function loadMarkets() {
         resolvedCell.className = "bad";
         settledCell.textContent = e.message;
       }
-    }),
-  );
+    })();
+  }
 }
 
 await core.init();

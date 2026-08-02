@@ -27,6 +27,44 @@ export function useRelay() {
   }
 }
 
+/**
+ * Retry a read through transient RPC failure.
+ *
+ * The public Monad RPC rate-limits (HTTP 429) and intermittently returns a bare
+ * CALL_EXCEPTION with no revert data for calls that succeed moments later. Neither is a
+ * contract error, and surfacing them as one sends whoever is debugging straight to the wrong
+ * layer -- a market shows "error: missing revert data" when the market is fine and the
+ * endpoint was simply busy.
+ *
+ * Reads only. Never wrap a write: a transaction that "failed" may still be mined, and
+ * retrying it can double-spend gas or send a second transaction.
+ */
+async function readWithRetry(fn, { attempts = 4, baseDelayMs = 400 } = {}) {
+  let lastError;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastError = e;
+      const msg = String(e?.message ?? e);
+      const transient =
+        msg.includes("429") ||
+        msg.includes("rate limit") ||
+        msg.includes("missing revert data") ||
+        msg.includes("could not coalesce") ||
+        e?.code === "CALL_EXCEPTION" ||
+        e?.code === "SERVER_ERROR" ||
+        e?.code === "TIMEOUT";
+      if (!transient || i === attempts - 1) throw e;
+      // Exponential backoff with jitter, so parallel callers do not retry in lockstep and
+      // reproduce the burst that got them throttled.
+      const delay = baseDelayMs * 2 ** i + Math.random() * 200;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
+}
+
 /** Normalise a relayer response into the same shape a direct submission returns. */
 function relayed(body) {
   return {
@@ -158,19 +196,21 @@ export async function connect() {
  */
 export async function marketInfo(signer, marketId, poolAddress = SHIELDED_POOL) {
   const pool = new ethers.Contract(poolAddress, POOL_ABI, signer);
-  const vaultAddress = await pool.marketVault(marketId);
+  const vaultAddress = await readWithRetry(() => pool.marketVault(marketId));
 
   if (vaultAddress === ethers.ZeroAddress) {
     return { vault: null, reason: `market ${marketId} is not registered on ${poolAddress}` };
   }
 
   const vault = new ethers.Contract(vaultAddress, VAULT_ABI, signer);
-  const [collateralAddress, denomination, bettingCloseTime, encrypted] = await Promise.all([
-    vault.collateral(),
-    vault.denomination(),
-    vault.bettingCloseTime(),
-    pool.encryptedMarket(marketId),
-  ]);
+  const [collateralAddress, denomination, bettingCloseTime, encrypted] = await readWithRetry(() =>
+    Promise.all([
+      vault.collateral(),
+      vault.denomination(),
+      vault.bettingCloseTime(),
+      pool.encryptedMarket(marketId),
+    ]),
+  );
 
   const collateral = new ethers.Contract(collateralAddress, ERC20_ABI, signer);
   const [symbol, decimals] = await Promise.all([
@@ -208,25 +248,24 @@ export async function settlementInfo(signer, marketId, poolAddress = SHIELDED_PO
   const info = await marketInfo(signer, marketId, poolAddress);
   if (!info.vault) return info;
 
-  const outcome = await info.vault.outcome();
+  const outcome = await readWithRetry(() => info.vault.outcome());
   const base = { ...info, outcome };
 
   if (outcome === VAULT_OUTCOME.UNRESOLVED) return { ...base, settled: false };
   if (outcome === VAULT_OUTCOME.VOID) return { ...base, settled: true }; // needs no published totals
 
-  const totalsAddress = await info.pool.encryptedTotals();
+  const totalsAddress = await readWithRetry(() => info.pool.encryptedTotals());
   if (totalsAddress === ethers.ZeroAddress) {
     return { ...base, settled: false, reason: "encryptedTotals is not bound on this pool yet" };
   }
 
   const totals = new ethers.Contract(totalsAddress, ENCRYPTED_TOTALS_ABI, signer);
-  const settled = await totals.settled(marketId);
+  const settled = await readWithRetry(() => totals.settled(marketId));
   if (!settled) return { ...base, settled: false };
 
-  const [finalYesTotal, finalNoTotal] = await Promise.all([
-    totals.finalYesTotal(marketId),
-    totals.finalNoTotal(marketId),
-  ]);
+  const [finalYesTotal, finalNoTotal] = await readWithRetry(() =>
+    Promise.all([totals.finalYesTotal(marketId), totals.finalNoTotal(marketId)]),
+  );
   return { ...base, settled: true, finalYesTotal, finalNoTotal, totalsAddress };
 }
 
