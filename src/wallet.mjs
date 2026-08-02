@@ -88,6 +88,18 @@ const ERC20_ABI = [
   "function symbol() view returns (string)",
 ];
 
+/**
+ * A provider that needs no wallet connection -- settlement state (resolved? settled? final
+ * totals?) is public chain data, not something behind a signature prompt. `settlementInfo`
+ * and `marketInfo` only ever call `view` functions with this, so a plain provider works
+ * exactly like a connected signer would for reading.
+ */
+let _readOnly = null;
+export function readOnlyProvider() {
+  if (!_readOnly) _readOnly = new ethers.JsonRpcProvider(MONAD_TESTNET.rpcUrls[0]);
+  return _readOnly;
+}
+
 export async function connect() {
   if (!window.ethereum) throw new Error("no injected wallet found — install MetaMask");
 

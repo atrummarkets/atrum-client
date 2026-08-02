@@ -76,10 +76,13 @@
       no on-chain list of "all markets" to scan). Created with
       <code>circuits/scripts/create-market.mjs</code> in atrum-core; nothing here creates one.
     </p>
+    <div class="row" style="margin-bottom:.8rem">
+      <button id="refresh-markets" class="ghost">Refresh</button>
+    </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>#</th><th>Question</th><th>Type</th><th>Betting</th><th>Resolves</th></tr></thead>
-        <tbody id="markets-body"><tr><td colspan="5" class="dim">loading…</td></tr></tbody>
+        <thead><tr><th>#</th><th>Question</th><th>Type</th><th>Betting</th><th>Resolved</th><th>Settled</th></tr></thead>
+        <tbody id="markets-body"><tr><td colspan="6" class="dim">loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -127,17 +130,6 @@
     </div>
   </div>
 
-  <div class="panel">
-    <h2>Settle a market — operator step, not a wallet action</h2>
-    <p class="dim" style="font-size:.87rem;margin:0 0 .8rem">
-      Redeeming needs the market resolved and its totals published. Neither happens
-      automatically here — there is no publisher service running. Run
-      <code>resolve-and-settle.mjs</code> in atrum-core (see its own usage text), then click
-      Refresh below.
-    </p>
-    <button id="refresh-settlement" class="ghost">Check settlement status</button>
-    <dl class="kv" id="settlement-info" style="margin-top:.8rem"></dl>
-  </div>
 
   <div class="panel"><pre id="log">ready.</pre></div>
 </main>

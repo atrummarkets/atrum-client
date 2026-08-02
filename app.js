@@ -39,6 +39,7 @@ import {
   submitWithdraw,
   VAULT_OUTCOME,
   SHIELDED_POOL,
+  readOnlyProvider,
 } from "./src/wallet.mjs";
 import { pathFor, waitForGraft, NotYetGrafted } from "./src/sequencer.mjs";
 import * as core from "./public/vendor/atrum-core.mjs";
@@ -318,32 +319,8 @@ $("notes-body").addEventListener("click", (e) => {
 });
 
 $("refresh-notes").onclick = renderNotes;
+$("refresh-markets").onclick = loadMarkets;
 
-// ---------------------------------------------------------------- settlement status
-
-$("refresh-settlement").onclick = async () => {
-  if (!session) return log("connect a wallet first");
-  const marketId = Number($("market").value);
-  const dl = $("settlement-info");
-  dl.innerHTML = "<dt>reading…</dt><dd></dd>";
-
-  try {
-    const info = await settlementInfo(session.signer, marketId);
-    if (!info.vault) {
-      dl.innerHTML = `<dt class="bad">unavailable</dt><dd>${info.reason}</dd>`;
-      return;
-    }
-    const outcomeLabel = ["Unresolved", "YES", "NO", "Void"][Number(info.outcome)];
-    dl.innerHTML =
-      `<dt>resolved</dt><dd class="${info.outcome === VAULT_OUTCOME.UNRESOLVED ? "bad" : "ok"}">${outcomeLabel}</dd>` +
-      `<dt>settled</dt><dd class="${info.settled ? "ok" : "dim"}">${info.settled}</dd>` +
-      (info.finalYesTotal !== undefined
-        ? `<dt>final YES</dt><dd>${info.finalYesTotal}</dd><dt>final NO</dt><dd>${info.finalNoTotal}</dd>`
-        : "");
-  } catch (e) {
-    dl.innerHTML = `<dt class="bad">error</dt><dd>${e.message}</dd>`;
-  }
-};
 
 // ---------------------------------------------------------------- wallet + deposit
 
@@ -478,13 +455,15 @@ const fmtTime = (unixSec) => new Date(unixSec * 1000).toLocaleString();
  * project's own rule is never build on eth_getLogs (100-block range cap on the public RPC).
  * A committed registry is the alternative that needs no chain scanning.
  */
+const OUTCOME_NAME = ["Unresolved", "YES", "NO", "Void"];
+
 async function loadMarkets() {
   let registry;
   try {
     registry = await (await fetch("./markets.json")).json();
   } catch {
     $("markets-body").innerHTML =
-      '<tr><td colspan="5" class="dim">no markets.json — run create-market.mjs in atrum-core</td></tr>';
+      '<tr><td colspan="6" class="dim">no markets.json — run create-market.mjs in atrum-core</td></tr>';
     return;
   }
 
@@ -498,7 +477,7 @@ async function loadMarkets() {
 
   if (!markets.length) {
     select.innerHTML = "";
-    body.innerHTML = '<tr><td colspan="5" class="dim">no markets yet — run create-market.mjs</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="dim">no markets yet — run create-market.mjs</td></tr>';
     return;
   }
 
@@ -511,12 +490,55 @@ async function loadMarkets() {
     .map((m) => {
       const closed = now >= m.bettingCloseTime;
       return (
-        `<tr><td>${m.id}</td><td>${m.question}</td><td>${m.type}</td>` +
+        `<tr data-market-row="${m.id}"><td>${m.id}</td><td>${m.question}</td><td>${m.type}</td>` +
         `<td class="${closed ? "bad" : "ok"}">${closed ? "closed" : "open"} (${fmtTime(m.bettingCloseTime)})</td>` +
-        `<td>${fmtTime(m.resolutionStartTime)}</td></tr>`
+        `<td class="dim">reading…</td><td class="dim">reading…</td></tr>`
       );
     })
     .join("");
+
+  // Resolved/settled is PUBLIC chain state -- read-only, needs no wallet connection. Each
+  // market gets its own row rather than one shared status block, so nothing implies the
+  // status shown belongs to whichever market happens to be selected elsewhere on the page.
+  const provider = readOnlyProvider();
+  await Promise.all(
+    markets.map(async (m) => {
+      const row = document.querySelector(`tr[data-market-row="${m.id}"]`);
+      if (!row) return;
+      const [, , , , resolvedCell, settledCell] = row.children;
+      try {
+        // The public RPC is flaky on eth_call, empirically -- the exact same call has been
+        // observed to succeed and then fail seconds apart with no state change in between.
+        // One retry absorbs that without hiding a REAL failure, since a genuinely broken
+        // call fails the same way twice.
+        let info;
+        try {
+          info = await settlementInfo(provider, m.id, registry.pool ?? SHIELDED_POOL);
+        } catch {
+          await new Promise((r) => setTimeout(r, 500));
+          info = await settlementInfo(provider, m.id, registry.pool ?? SHIELDED_POOL);
+        }
+        if (!info.vault) {
+          resolvedCell.textContent = "unavailable";
+          settledCell.textContent = info.reason ?? "";
+          return;
+        }
+        const outcome = Number(info.outcome);
+        resolvedCell.textContent = OUTCOME_NAME[outcome];
+        resolvedCell.className = outcome === 0 ? "bad" : "ok";
+        settledCell.textContent = info.settled
+          ? info.finalYesTotal !== undefined
+            ? `yes (YES ${info.finalYesTotal} / NO ${info.finalNoTotal})`
+            : "yes"
+          : "no";
+        settledCell.className = info.settled ? "ok" : "dim";
+      } catch (e) {
+        resolvedCell.textContent = "error";
+        resolvedCell.className = "bad";
+        settledCell.textContent = e.message;
+      }
+    }),
+  );
 }
 
 await core.init();
