@@ -31,6 +31,7 @@ import { prove } from "./src/prover.mjs";
 import {
   connect,
   marketInfo,
+  poolInfo,
   settlementInfo,
   committeeKey,
   submitDeposit,
@@ -377,21 +378,16 @@ async function showMarket() {
 
     if (!info.vault) {
       dl.innerHTML = `<dt class="bad">unavailable</dt><dd>${info.reason}</dd>`;
-      $("deposit").disabled = true;
       return;
     }
 
-    const balance = await info.collateral.balanceOf(session.address);
-    if (!current()) return;
-
     dl.innerHTML = `
       <dt>vault</dt><dd>${info.vaultAddress}</dd>
-      <dt>collateral</dt><dd>${info.collateralAddress} (${info.symbol})</dd>
-      <dt>denomination</dt><dd>${info.denomination}</dd>
       <dt>encrypted</dt><dd>${info.encrypted ? "yes" : "no — plaintext market"}</dd>
-      <dt>betting</dt><dd class="${info.closed ? "bad" : "ok"}">${info.closed ? "CLOSED" : "open"}</dd>
-      <dt>your balance</dt><dd>${balance}</dd>`;
-    $("deposit").disabled = info.closed;
+      <dt>betting</dt><dd class="${info.closed ? "bad" : "ok"}">${info.closed ? "CLOSED" : "open"}</dd>`;
+    // Deliberately does NOT touch the deposit button. A deposit names no market, so gating it
+    // on a market's betting deadline would block the one action that has no deadline -- and
+    // would strand a user whose only open market had just closed.
   } catch (e) {
     if (!current()) return;
     dl.innerHTML = `<dt class="bad">error</dt><dd>${e.message}</dd>`;
@@ -405,12 +401,38 @@ $("connect").onclick = async () => {
     $("account").className = "ok";
     log(`connected ${session.address}`);
     log(`pool ${SHIELDED_POOL}`);
+    await showPool();
     await showMarket();
     await renderNotes();
   } catch (e) {
     log(`connect failed: ${e.message}`);
   }
 };
+
+/**
+ * Everything a DEPOSIT depends on, which is nothing about a market.
+ *
+ * The deposit button is enabled from here and nowhere else. Enabling it from `showMarket`
+ * (as it used to be) meant a closed market disabled the one action that has no deadline.
+ */
+async function showPool() {
+  const dl = $("pool-info");
+  dl.innerHTML = '<dt>reading…</dt><dd></dd>';
+  try {
+    const info = await poolInfo(session.signer);
+    const balance = await info.collateral.balanceOf(session.address);
+
+    dl.innerHTML = `
+      <dt>pool</dt><dd>${SHIELDED_POOL}</dd>
+      <dt>collateral</dt><dd>${info.collateralAddress} (${info.symbol})</dd>
+      <dt>denomination</dt><dd>${info.denomination}</dd>
+      <dt>your balance</dt><dd>${balance}</dd>`;
+    $("deposit").disabled = false;
+  } catch (e) {
+    dl.innerHTML = `<dt class="bad">error</dt><dd>${e.message}</dd>`;
+    $("deposit").disabled = true;
+  }
+}
 
 $("market").onchange = showMarket;
 

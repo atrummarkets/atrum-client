@@ -9,7 +9,7 @@
  * genuine client code path.
  *
  * Usage:
- *   PRIVATE_KEY=0x... node scripts/live-loop.mjs deposit
+ *   PRIVATE_KEY=0x... node scripts/live-loop.mjs deposit [units]
  *   PRIVATE_KEY=0x... node scripts/live-loop.mjs bet <side: YES|NO>
  *   PRIVATE_KEY=0x... node scripts/live-loop.mjs redeem
  *   PRIVATE_KEY=0x... node scripts/live-loop.mjs withdraw <amount>
@@ -94,7 +94,18 @@ page.on("console", (m) => {
  * PRIVATE_KEY. From app.js's perspective this is indistinguishable from MetaMask.
  */
 await page.addInitScript(
-  ({ privateKey, rpcUrl }) => {
+  ({ privateKey, rpcUrl, relay }) => {
+    // Relaying defaults ON in the client, and the sequencer only accepts /relay when it was
+    // started with RELAY_MNEMONIC. Forcing the flag here means a run against a
+    // relaying-disabled sequencer fails on the assertion it was written for, rather than on
+    // a 404 from an endpoint that was never enabled.
+    try {
+      localStorage.setItem("atrumRelay", relay);
+    } catch {
+      // A page that has not loaded yet has no storage; app.js reads it lazily, so this is
+      // best-effort and its absence just means the client default applies.
+    }
+
     window.__installWallet = async () => {
       const { ethers } = await import("./public/vendor/ethers.min.js");
       const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -127,7 +138,14 @@ await page.addInitScript(
       };
     };
   },
-  { privateKey: PRIVATE_KEY, rpcUrl: "https://testnet-rpc.monad.xyz" },
+  {
+    privateKey: PRIVATE_KEY,
+    // The public endpoint reported "Signer had insufficient balance" for a transaction that
+    // succeeded verbatim through Ankr, on a wallet holding 8.37 MON. See
+    // atrum-core/sequencer/src/chains.ts for the full elimination.
+    rpcUrl: process.env.RPC_URL || "https://rpc.ankr.com/monad_testnet",
+    relay: process.env.ATRUM_RELAY || "on",
+  },
 );
 
 await page.goto(url, { waitUntil: "domcontentloaded" });
@@ -173,19 +191,13 @@ if (cmd === "status") {
   console.log("notes:");
   for (const r of rows) console.log("  " + r.join(" | "));
 } else if (cmd === "deposit") {
-  // Pick the market explicitly. The dropdown defaults to the first entry in markets.json,
-  // which is whichever market was registered earliest -- very likely one whose betting has
-  // already closed. Depositing into a closed market produces a note that can never be bet.
-  if (arg) {
-    await page.selectOption("#market", arg);
-    // Wait for the button, not for a duration. Selecting a market triggers showMarket(),
-    // which makes several chain reads before deciding whether betting is open -- a fixed
-    // sleep is a guess that fails whenever the RPC is slower than the guess.
-    await page.waitForFunction(() => !document.getElementById("deposit").disabled, null, {
-      timeout: 30000,
-    });
-    console.log(`market set to #${arg}`);
-  }
+  // No market is selected, and none can be: a deposit names no market. The button is enabled
+  // by `showPool`, which reads the pool's own collateral and denomination, so waiting on the
+  // button is waiting on the only thing a deposit actually depends on.
+  if (arg) await page.selectOption("#units", arg);
+  await page.waitForFunction(() => !document.getElementById("deposit").disabled, null, {
+    timeout: 30000,
+  });
   await page.click("#deposit");
   await Promise.race([waitLogContains("DEPOSITED"), waitLogContains("FAILED")]);
   await drainLog();

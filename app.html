@@ -89,11 +89,12 @@
 
   <div class="panel">
     <h2>Deposit</h2>
+    <p class="dim" style="font-size:.87rem;margin:0 0 .8rem">
+      A deposit names no market. It buys an unbet note you can stake in any market later, or
+      withdraw without ever staking it — which is what makes the anonymity set every unspent
+      note in the system rather than one market’s depositors.
+    </p>
     <div class="row">
-      <div>
-        <label for="market">Market</label>
-        <select id="market" style="min-width:20rem"></select>
-      </div>
       <div>
         <label for="units">Units — powers of ten only</label>
         <select id="units">
@@ -102,6 +103,21 @@
         </select>
       </div>
       <button id="deposit" disabled>Prove and deposit</button>
+    </div>
+    <dl class="kv" id="pool-info" style="margin-top:1rem"></dl>
+  </div>
+
+  <div class="panel">
+    <h2>Bet — which market</h2>
+    <p class="dim" style="font-size:.87rem;margin:0 0 .8rem">
+      The market is chosen at BET time, not at deposit time. Pick one here, then use the
+      Bet YES / Bet NO buttons on any unbet note below.
+    </p>
+    <div class="row">
+      <div>
+        <label for="market">Market</label>
+        <select id="market" style="min-width:20rem"></select>
+      </div>
     </div>
     <dl class="kv" id="market-info" style="margin-top:1rem"></dl>
   </div>

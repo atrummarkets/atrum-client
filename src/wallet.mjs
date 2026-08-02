@@ -101,7 +101,7 @@ export const MONAD_TESTNET = {
  * build/ no longer holds). Byte-verified after deploy: all four verifiers' on-chain bytecode
  * matches `forge inspect <Name> deployedBytecode` exactly, sha256 identical.
  */
-export const SHIELDED_POOL = "0xa54cc8AC537E64f70e1b842A9edc4169ed22D06f";
+export const SHIELDED_POOL = "0x75E5B101D1dA02F1B19364a5d49f1Ee0b260a08a";
 
 /**
  * Monad bills the DECLARED gas limit, not the gas used -- measured, not assumed. A 21,000-gas
