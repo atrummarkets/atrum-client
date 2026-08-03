@@ -43,6 +43,7 @@
   .tablewrap { overflow-x:auto; }
   button.small { padding:.3rem .6rem; font-size:.82rem; }
   input.amt { width:6rem; font-size:.82rem; padding:.3rem .5rem; }
+  input.recipient { width:12rem; font-size:.82rem; padding:.3rem .5rem; }
 </style>
 </head>
 <body>
@@ -131,6 +132,19 @@
       can only bet, a position note can only redeem (once the market is resolved and settled),
       a settled note can only withdraw.
     </p>
+    <div class="banner warn">
+      <strong>Withdrawing to your connected wallet re-links you to every bet you made.</strong>
+      The recipient field defaults to a smaller amount and your own address — override both if
+      you actually want privacy at exit:
+      <ul style="margin:.4rem 0 0; padding-left:1.2rem">
+        <li>Enter a fresh address you control to break the link. Fund its gas from a source
+            that isn't already tied to you — never from the wallet that deposited.</li>
+        <li>Never consolidate several fresh withdrawal addresses back into one wallet; the
+            fan-in is a stronger signal than the withdrawal ever was.</li>
+        <li>Smaller amounts over time look like every other deposit-sized rung. A full,
+            lump-sum withdrawal is the easiest pattern to correlate.</li>
+      </ul>
+    </div>
     <div class="row" style="margin-bottom:.9rem">
       <button id="export" class="ghost">Export notes</button>
       <button id="refresh-notes" class="ghost">Refresh</button>

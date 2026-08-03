@@ -28,6 +28,7 @@ import {
   OUTCOME,
 } from "./src/notes.mjs";
 import { prove } from "./src/prover.mjs";
+import { ethers } from "./public/vendor/ethers.min.js";
 import {
   connect,
   marketInfo,
@@ -67,6 +68,19 @@ async function refreshNoteCount() {
     : "no notes yet";
 }
 
+/**
+ * Full withdrawal is what a user gets by just clicking the button -- the least private path,
+ * since a lump-sum exit is the easiest pattern to correlate. Default to the largest rung
+ * strictly below the note's value instead, so smaller withdrawals over time look like every
+ * other deposit-sized amount. Not a hard limit: fall back to the full value on the smallest
+ * rung, and nothing stops a user from typing the full amount back in.
+ */
+function defaultWithdrawAmount(units) {
+  const v = BigInt(units);
+  const smaller = core.snapToDenomination(v - 1n);
+  return (smaller ?? v).toString();
+}
+
 async function renderNotes() {
   const notes = (await allNotes()).sort((a, b) => b.savedAt - a.savedAt);
   const body = $("notes-body");
@@ -78,7 +92,8 @@ async function renderNotes() {
     if (role === "spent") tr.className = "spent";
 
     const withdrawHtml =
-      `<input class="amt" type="number" min="1" max="${note.units}" value="${note.units}" data-amt="${note.id}"> ` +
+      `<input class="amt" type="number" min="1" max="${note.units}" value="${defaultWithdrawAmount(note.units)}" data-amt="${note.id}"> ` +
+      `<input class="recipient" type="text" placeholder="defaults to your connected wallet — see warning below" data-recipient="${note.id}"> ` +
       `<button class="small" data-act="withdraw" data-c="${note.id}">Withdraw</button>`;
 
     let actionHtml = '<span class="dim">—</span>';
@@ -304,15 +319,27 @@ async function redeemNote(commitment) {
 
 // ---------------------------------------------------------------- withdraw
 
-async function withdrawNote(commitment, amountStr) {
+async function withdrawNote(commitment, amountStr, recipientStr) {
   const notes = await allNotes();
   const note = notes.find((n) => n.id === commitment);
   if (!note) return log(`no such note ${commitment}`);
 
   const amount = BigInt(amountStr || "0");
 
+  // Checked before any chain read or proof: a bad address should fail in milliseconds, not
+  // after a 10+ second proof. Blank means "my own wallet" -- today's behaviour, unchanged.
+  const recipientRaw = (recipientStr || "").trim();
+  let recipient = session.address;
+  if (recipientRaw) {
+    if (!ethers.isAddress(recipientRaw)) {
+      return log(`\nWITHDRAW FAILED: "${recipientRaw}" is not a valid address`);
+    }
+    recipient = ethers.getAddress(recipientRaw);
+  }
+
   try {
-    log(`\nwithdrawing ${amount} of ${short(commitment)}…`);
+    log(`\nwithdrawing ${amount} of ${short(commitment)} to `
+      + `${recipient === session.address ? "your connected wallet" : `fresh address ${recipient}`}…`);
     if (amount <= 0n || amount > note.units) {
       throw new Error(`amount must be between 1 and ${note.units}`);
     }
@@ -353,7 +380,7 @@ async function withdrawNote(commitment, amountStr) {
     await saveNote(changeNote, { status: "unsubmitted", marketId: note.marketId.toString() });
     log(`  change note ${short(changeNote.commitment.toString())} (${change} units) saved locally`);
 
-    const input = withdrawInput({ spend: note, recipient: session.address, amount, changeNote, path });
+    const input = withdrawInput({ spend: note, recipient, amount, changeNote, path });
 
     log("  proving in a worker…");
     const { calldata, proveMs } = await prove("withdraw", input, {
@@ -398,8 +425,9 @@ $("notes-body").addEventListener("click", (e) => {
   if (act === "bet") betOnNote(c, BigInt(btn.dataset.side));
   else if (act === "redeem") redeemNote(c);
   else if (act === "withdraw") {
-    const input = document.querySelector(`input[data-amt="${c}"]`);
-    withdrawNote(c, input?.value);
+    const amtInput = document.querySelector(`input[data-amt="${c}"]`);
+    const recipientInput = document.querySelector(`input[data-recipient="${c}"]`);
+    withdrawNote(c, amtInput?.value, recipientInput?.value);
   }
 });
 
