@@ -116,12 +116,14 @@ const check = (name, got, want) =>
   );
 }
 
-// withdraw pins both notes to 3. Exercises packWithdrawData.
+// withdraw pins both notes to 3. Exercises packWithdrawData. `withdrawData` no longer packs
+// `marketId` itself, only whether it is zero -- same derivation as the circuit's
+// `marketZero.out`, recomputed here rather than trusted.
 {
   const w = inputs.withdraw;
   check(
     "withdraw withdrawData",
-    atrum.packWithdrawData(B(w.marketId), B(w.recipient), B(w.amount)),
+    atrum.packWithdrawData(B(w.marketId) === 0n, B(w.recipient), B(w.amount)),
     w.withdrawData,
   );
 }

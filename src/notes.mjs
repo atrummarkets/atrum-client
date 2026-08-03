@@ -289,7 +289,7 @@ export function withdrawInput({ spend, recipient, amount, changeNote, path }) {
     root: path.root.toString(),
     nullifierHash: core.nullifierHash(spend.nullifier).toString(),
     changeCommitment: changeNote.commitment.toString(),
-    withdrawData: core.packWithdrawData(spend.marketId, recipient, amount).toString(),
+    withdrawData: core.packWithdrawData(unbetExit, recipient, amount).toString(),
     nullifier: spend.nullifier.toString(),
     secret: spend.secret.toString(),
     newNullifier: changeNote.nullifier.toString(),
