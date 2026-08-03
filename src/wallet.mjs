@@ -86,22 +86,22 @@ export const MONAD_TESTNET = {
 };
 
 /**
- * Deployed 2026-08-02 with EXERCISE_MODE=1 (6-minute betting window, 1-hour resolution gap)
- * and SEQUENCER pinned to the sequencer's first relayer address -- the default (deployer)
- * leaves every flushBatch reverting once a real sequencer with its own relayer mnemonic
- * runs against it. See atrum-core HANDOFF.md's "0-ter" for why both of those matter.
+ * Deployed 2026-08-02 (Monad testnet). `minAnonymitySet = 8` (production value), `minRootAge
+ * = 0`. `Vault.MIN_RESOLUTION_GAP` on THIS deployment is 3 minutes, not the 1-hour production
+ * value -- a demo-only shortening (`contracts/src/Vault.sol`), immutable and readable on
+ * chain like every other test-vs-production constant here.
  *
- * PROVEN, not just deployed: the entire lifecycle ran against this pool through this exact
- * client code -- deposit, betEncrypted, resolve, publishFinalTotals, redeemPrivate, withdraw,
- * six real transactions, `Withdrawn` event confirmed from the raw log. Block numbers in
- * atrum-core HANDOFF.md "0-ter".
+ * This redeploy closed the exit-correlation leak: `withdrawData` no longer packs the full
+ * `marketId`, only a 1-bit `unbetExit` flag (see `ShieldedPool._unpackWithdrawData`,
+ * `withdraw.circom`) -- a winner's withdrawal used to publicly name the market they won in,
+ * regardless of how private the bet was. See atrum-core HANDOFF.md's live-deployment section
+ * for the transaction evidence and what the fix costs (the settled-payout branch of
+ * `_checkWithdrawable` has no `marketId` left to check per-market solvency against).
  *
- * Earlier pools: `0x5Ede6585...` (normal 7-day schedule, still valid, just untestable in one
- * sitting) and `0x6af21cA1...` (actually dead -- verifiers baked against a zkey circuits/
- * build/ no longer holds). Byte-verified after deploy: all four verifiers' on-chain bytecode
- * matches `forge inspect <Name> deployedBytecode` exactly, sha256 identical.
+ * Every prior pool this session is orphaned, same as this one will be on the next redeploy --
+ * see HANDOFF.md for the running list rather than duplicating it here.
  */
-export const SHIELDED_POOL = "0x5EaB8063fB060012c550b29E7321d79b6740773c";
+export const SHIELDED_POOL = "0x26969270fFB9c0b8307abB4b8a14057DA9C50Fec";
 
 /**
  * Monad bills the DECLARED gas limit, not the gas used -- measured, not assumed. A 21,000-gas

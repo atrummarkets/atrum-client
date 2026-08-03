@@ -1,47 +1,68 @@
 {
-  "pool": "0x5EaB8063fB060012c550b29E7321d79b6740773c",
+  "pool": "0x26969270fFB9c0b8307abB4b8a14057DA9C50Fec",
   "markets": [
     {
-      "id": 21,
-      "question": "Will ETH be above $2,000 at 2026-08-02T18:13:16.000Z?",
+      "id": 13,
+      "question": "Will BTC be above $63,000 at 2026-08-03T13:21:32.000Z?",
       "type": "oracle",
-      "symbol": "ETH",
+      "symbol": "BTC",
       "direction": "above",
-      "threshold": "2000",
-      "vault": "0x5aBcBFEFEE39578f1AbE278aDCbAcB25Ae20D8e6",
-      "resolver": "0xC2A0F51853BDC1916fD4d859F8B643B65FE52721",
+      "threshold": "63000",
+      "vault": "0xEdeDe6bBf1998172E42080276D5a05134eCa9636",
+      "resolver": "0x061A8a9FF32580b2995db794D2de2BE3f84067cD",
       "spec": {
-        "priceId": "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
-        "threshold": "200000000000",
+        "priceId": "0xe62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
+        "threshold": "6300000000000",
         "thresholdExpo": -8,
-        "targetTime": 1785694396,
+        "targetTime": 1785763292,
         "windowSeconds": 3600,
         "greaterThan": true
       },
-      "bettingCloseTime": 1785693796,
-      "resolutionStartTime": 1785698056,
-      "createdAt": 1785692596
+      "bettingCloseTime": 1785762692,
+      "resolutionStartTime": 1785766952,
+      "createdAt": 1785741692
     },
     {
-      "id": 22,
-      "question": "Will ETH be above $2,000 at 2026-08-02T18:14:51.000Z?",
+      "id": 14,
+      "question": "Will ETH be above $1,850 at 2026-08-03T11:21:48.000Z?",
       "type": "oracle",
       "symbol": "ETH",
       "direction": "above",
-      "threshold": "2000",
-      "vault": "0x0Ff5Af79e802187D0340c2C536765d5552Bf037f",
-      "resolver": "0xC2A0F51853BDC1916fD4d859F8B643B65FE52721",
+      "threshold": "1850",
+      "vault": "0x5878E7A570C03Fb84425Ec48D14496D1354ED7E8",
+      "resolver": "0x061A8a9FF32580b2995db794D2de2BE3f84067cD",
       "spec": {
         "priceId": "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
-        "threshold": "200000000000",
+        "threshold": "185000000000",
         "thresholdExpo": -8,
-        "targetTime": 1785694491,
+        "targetTime": 1785756108,
         "windowSeconds": 3600,
         "greaterThan": true
       },
-      "bettingCloseTime": 1785694191,
-      "resolutionStartTime": 1785698151,
-      "createdAt": 1785693891
+      "bettingCloseTime": 1785755508,
+      "resolutionStartTime": 1785759768,
+      "createdAt": 1785741708
+    },
+    {
+      "id": 15,
+      "question": "Will SOL be above $75 at 2026-08-03T19:22:03.000Z?",
+      "type": "oracle",
+      "symbol": "SOL",
+      "direction": "above",
+      "threshold": "75",
+      "vault": "0x0519dde7d7e36f93034aA04D5b51371f72B26784",
+      "resolver": "0x061A8a9FF32580b2995db794D2de2BE3f84067cD",
+      "spec": {
+        "priceId": "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
+        "threshold": "7500000000",
+        "thresholdExpo": -8,
+        "targetTime": 1785784923,
+        "windowSeconds": 3600,
+        "greaterThan": true
+      },
+      "bettingCloseTime": 1785784323,
+      "resolutionStartTime": 1785788583,
+      "createdAt": 1785741723
     }
   ]
 }

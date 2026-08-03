@@ -145,12 +145,13 @@ cost. It disappears on any subsequent proof.)
 
 ### The deployment moves whenever the circuits do
 
-`SHIELDED_POOL` currently points at `0xa54cc8AC537E64f70e1b842A9edc4169ed22D06f`. Two earlier
-pools are referenced in older commits/conversation and should not be used: `0x5Ede6585...`
-(still valid, normal 7-day betting window — just not what this constant points at) and
-`0x6af21cA1...` (actually dead — its verifiers were baked against a zkey circuits/build/ no
-longer holds, so every proof fails `InvalidProof()` there). Full account of both in
-atrum-core's `deployments/monad-testnet-10143/README.md` and `HANDOFF.md`.
+`SHIELDED_POOL` currently points at `0x26969270fFB9c0b8307abB4b8a14057DA9C50Fec` —
+`minAnonymitySet = 8` (production value), `Vault.MIN_RESOLUTION_GAP = 3 minutes` (**demo
+value**, production intent is 1 hour). Every earlier pool referenced in older commits or
+conversation is dead or orphaned; do not use one just because it appears in a past commit
+message. The full deployment history, with why each one was replaced, lives in atrum-core's
+`deployments/monad-testnet-10143/README.md` and `HANDOFF.md` — check those rather than trusting
+an address pasted anywhere else, including here after the next redeploy.
 
 **Running your own sequencer against this pool?** Two things that will otherwise cost an
 hour: the sequencer's default port (`:8080`) collides with this app's own dev server — run it
